@@ -1,0 +1,36 @@
+app:
+  name: "Shopee ZPL Spooler"
+  version: "0.1.0-mvp"
+  theme: "dark"
+  color_theme: "blue"
+
+printer:
+  default_name: ""
+  encoding: "utf-8"
+  chunk_size: 50
+  dev_mode: false
+  dev_output_dir: "data/dev_output"
+
+paths:
+  default_input_dir: "~/Downloads"
+  templates_dir: "src/core/templates"
+  logs_dir: "logs"
+
+label_models:
+  - id: "10x15"
+    nome: "10 x 15 cm (padrão Shopee)"
+    largura_dots: 800
+    altura_dots: 1200
+  - id: "10x10"
+    nome: "10 x 10 cm"
+    largura_dots: 800
+    altura_dots: 800
+  - id: "4x3"
+    nome: "4 x 3 cm (mini)"
+    largura_dots: 320
+    altura_dots: 240
+
+logging:
+  level: "INFO"
+  max_bytes: 1048576
+  backup_count: 5
