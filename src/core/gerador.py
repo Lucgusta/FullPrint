@@ -16,25 +16,30 @@ log = get_logger("gerador")
 class GeradorLoteZPL:
     def __init__(self, templates_dir: Path) -> None:
         self.templates_dir = Path(templates_dir)
-        self._template_separador: str | None = None
 
-    def _carregar_template_separador(self) -> str:
-        if self._template_separador is None:
-            arquivo = self.templates_dir / "separador.zpl"
-            self._template_separador = arquivo.read_text(encoding="utf-8")
-        return self._template_separador
-
-    def gerar_separador(
-        self, sku: str, descricao: str, qtd: int, lote_id: str = "MVP"
-    ) -> str:
-        template = self._carregar_template_separador()
-        return template.format(
-            sku=sanitizar_para_zpl(sku),
-            descricao=sanitizar_para_zpl(descricao)[:60],
-            qtd=qtd,
-            lote_id=lote_id,
-            data=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        )
+    def _gerar_linha_2_colunas(self, esq: dict | None, dir_item: dict | None) -> str:
+        partes = ["^XA", "^CI28"]
+        offsets = [(8, esq), (432, dir_item)]
+        y_offset = 24
+        
+        for x_offset, dado in offsets:
+            if not dado:
+                continue
+            if dado["tipo"] == "produto":
+                sku = sanitizar_para_zpl(dado["sku"])
+                desc = sanitizar_para_zpl(dado["desc"])
+                partes.append(f"^FO{x_offset},{y_offset}^BQN,2,4^FDQA,{sku}^FS")
+                partes.append(f"^FO{x_offset+110},{y_offset+10}^A0N,25,25^FD{sku}^FS")
+                partes.append(f"^FO{x_offset+110},{y_offset+40}^FB270,5,0,L,0^A0N,20,20^FD{desc}^FS")
+            elif dado["tipo"] == "separador":
+                sku = sanitizar_para_zpl(dado["sku"])
+                desc = sanitizar_para_zpl(dado["desc"])
+                qtd = dado["qtd"]
+                partes.append(f"^FO{x_offset},{y_offset+10}^FB380,2,0,L,0^A0N,30,30^FD{qtd} Produtos^FS")
+                partes.append(f"^FO{x_offset},{y_offset+70}^FB380,4,0,L,0^A0N,20,20^FD(Etiqueta de separacao) = {sku}, {desc}^FS")
+                
+        partes.append("^XZ")
+        return "\n".join(partes)
 
     def gerar_zpl_final(
         self,
@@ -43,18 +48,24 @@ class GeradorLoteZPL:
     ) -> str:
         partes: list[str] = []
         for grupo in grupos.values():
-            separador = self.gerar_separador(
-                grupo.sku, grupo.descricao, grupo.total_stickers, lote_id
-            )
-            partes.append(separador)
-            partes.extend(grupo.etiquetas)
+            # Cria a etiqueta de separador na esquerda, vazio na direita
+            separador = {"tipo": "separador", "qtd": grupo.qtd, "sku": grupo.sku, "desc": grupo.descricao}
+            partes.append(self._gerar_linha_2_colunas(separador, None))
+            
+            # Adiciona as etiquetas de produto em pares
+            produtos = [{"tipo": "produto", "sku": grupo.sku, "desc": grupo.descricao} for _ in range(grupo.qtd)]
+            for i in range(0, len(produtos), 2):
+                esq = produtos[i]
+                dir_item = produtos[i+1] if i + 1 < len(produtos) else None
+                partes.append(self._gerar_linha_2_colunas(esq, dir_item))
+                
         zpl_final = "\n".join(partes)
         log.info(
-            "Lote %s gerado: %d grupos, %d blocos, %d stickers totais",
+            "Lote %s gerado: %d grupos, %d blocos impressao, %d stickers totais",
             lote_id,
             len(grupos),
+            len(partes),
             sum(g.qtd for g in grupos.values()),
-            sum(g.total_stickers for g in grupos.values()),
         )
         return zpl_final
 
@@ -63,24 +74,28 @@ class GeradorLoteZPL:
         etiquetas: list[EtiquetaZPL],
         lote_id: str = "MVP",
     ) -> str:
-        """Concatena na ordem original do arquivo, sem separadores nem agrupamento.
-
-        Como 1 EtiquetaZPL = 1 sticker (1 QR) e multiplos sticker compartilham
-        o mesmo GRF, dedupe-se pelo grf_indice para nao reimprimir N vezes.
-        """
+        """Gera as etiquetas na ordem original, agrupando em 2 colunas, mas sem separadores."""
         vistos: set[int | str] = set()
-        partes: list[str] = []
+        unicas = []
         for e in etiquetas:
             chave = e.metadados.get("grf_indice", e.indice)
             if chave in vistos:
                 continue
             vistos.add(chave)
-            partes.append(e.zpl_raw)
+            unicas.append(e)
+            
+        partes: list[str] = []
+        produtos = [{"tipo": "produto", "sku": e.sku, "desc": e.descricao} for e in unicas]
+        for i in range(0, len(produtos), 2):
+            esq = produtos[i]
+            dir_item = produtos[i+1] if i + 1 < len(produtos) else None
+            partes.append(self._gerar_linha_2_colunas(esq, dir_item))
+            
         zpl_final = "\n".join(partes)
         log.info(
-            "Lote %s gerado (ordem original): %d GRFs, %d stickers totais",
+            "Lote %s gerado (ordem original): %d blocos impressao, %d stickers totais",
             lote_id,
             len(partes),
-            len(etiquetas),
+            len(unicas),
         )
         return zpl_final
