@@ -7,7 +7,13 @@ Invocar a partir da RAIZ do repositorio:
 Gera one-folder em `dist/FullPrint/` (mais rapido e estavel que one-file para
 apps com Tkinter + OCR). O Inno Setup empacota essa pasta + Tesseract embutido.
 """
+import os
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+# Caminhos do .spec sao resolvidos relativos a pasta do spec (packaging/);
+# ancoramos tudo na RAIZ do repo (um nivel acima) para invocar a partir dela.
+ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
 
 datas = []
 # Assets do CustomTkinter / tkinterdnd2 (temas, dll do drag-and-drop).
@@ -15,8 +21,8 @@ datas += collect_data_files("customtkinter")
 datas += collect_data_files("tkinterdnd2")
 # Configuracao e template ZPL do separador.
 datas += [
-    ("src/config/config.yaml", "src/config"),
-    ("src/core/templates/separador.zpl", "src/core/templates"),
+    (os.path.join(ROOT, "src/config/config.yaml"), "src/config"),
+    (os.path.join(ROOT, "src/core/templates/separador.zpl"), "src/core/templates"),
 ]
 
 hiddenimports = []
@@ -31,8 +37,8 @@ hiddenimports += [
 block_cipher = None
 
 a = Analysis(
-    ["src/main.py"],
-    pathex=["."],
+    [os.path.join(ROOT, "src/main.py")],
+    pathex=[ROOT],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
