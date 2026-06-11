@@ -8,7 +8,9 @@ venv/
 
 logs/*.log*
 data/dev_output/*.zpl
+data/dev_output/*.png
 data/*.sqlite*
+data/sku_catalog.json
 
 .vscode/
 .idea/

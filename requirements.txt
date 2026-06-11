@@ -2,3 +2,12 @@ customtkinter>=5.2.2
 PyYAML>=6.0.1
 tkinterdnd2>=0.4.2
 pywin32>=306; sys_platform == "win32"
+
+# Parser GRF (Shopee Full) - decodifica etiquetas rasterizadas e extrai SKU/descricao.
+Pillow>=10.0.0
+pyzbar>=0.1.9
+pytesseract>=0.3.10
+# Dependencias do sistema (instalar separadamente):
+#   Linux:   apt install tesseract-ocr tesseract-ocr-por libzbar0
+#   Windows: instalar Tesseract.exe (UB-Mannheim build) + idioma 'por'.
+#            O pyzbar para Windows ja inclui libzbar.dll empacotada.
