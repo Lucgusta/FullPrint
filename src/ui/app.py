@@ -1,12 +1,19 @@
 """Janela principal da aplicacao (CustomTkinter)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import customtkinter as ctk
 
 from ..config.settings import Settings
+from ..services import updater
 from ..services.printer import ZebraPrinterService
 from ..services.spooler_worker import PrintQueueManager
+from ..utils.logger import get_logger
+from ..utils.runtime import is_frozen
 from .views.main_view import MainView
+
+log = get_logger("app")
 
 
 class ShopeeZPLApp(ctk.CTk):
@@ -38,6 +45,25 @@ class ShopeeZPLApp(ctk.CTk):
         self.main_view.pack(fill="both", expand=True)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Auto-update silencioso: so faz sentido no app instalado (.exe). Em
+        # desenvolvimento (rodando do codigo) nao verifica nada.
+        self._pending_installer: Path | None = None
+        if is_frozen():
+            updater.check_and_download_async(self._on_update_ready)
+
+    def _on_update_ready(self, installer_path: Path) -> None:
+        """Callback do updater (roda em thread): registra o instalador baixado.
+
+        A atualizacao e aplicada no fechamento do app, em silencio.
+        """
+        self.after(0, self._set_pending_installer, installer_path)
+
+    def _set_pending_installer(self, installer_path: Path) -> None:
+        self._pending_installer = installer_path
+        log.info("Atualizacao pronta; sera aplicada ao fechar o app.")
+
     def _on_close(self) -> None:
         self.worker.stop()
+        if self._pending_installer is not None:
+            updater.run_installer_silent(self._pending_installer)
         self.destroy()

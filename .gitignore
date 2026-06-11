@@ -14,3 +14,9 @@ data/sku_catalog.json
 
 .vscode/
 .idea/
+
+# Artefatos de build/distribuicao (gerados pelo PyInstaller/Inno Setup/CI)
+build/
+dist/
+packaging/tesseract/
+packaging/dist_installer/

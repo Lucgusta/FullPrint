@@ -1,6 +1,7 @@
 customtkinter>=5.2.2
 PyYAML>=6.0.1
 tkinterdnd2>=0.4.2
+packaging>=23.0
 pywin32>=306; sys_platform == "win32"
 
 # Parser GRF (Shopee Full) - decodifica etiquetas rasterizadas e extrai SKU/descricao.

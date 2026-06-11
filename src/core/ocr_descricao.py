@@ -38,11 +38,18 @@ ALTURA_SELLER_PX = 14
 def _tem_tesseract() -> bool:
     global _TESSERACT_DISPONIVEL
     if _TESSERACT_DISPONIVEL is None:
-        _TESSERACT_DISPONIVEL = shutil.which("tesseract") is not None
+        # 1) Tesseract embutido (app instalado via PyInstaller/Inno Setup).
+        # 2) Fallback: binario `tesseract` no PATH (desenvolvimento).
+        from ..utils.runtime import configure_tesseract
+
+        if configure_tesseract():
+            _TESSERACT_DISPONIVEL = True
+        else:
+            _TESSERACT_DISPONIVEL = shutil.which("tesseract") is not None
         if not _TESSERACT_DISPONIVEL:
             log.warning(
-                "Tesseract nao encontrado no PATH. OCR desabilitado;"
-                " descricao ficara vazia."
+                "Tesseract nao encontrado (nem embutido nem no PATH). OCR"
+                " desabilitado; descricao ficara vazia."
             )
     return _TESSERACT_DISPONIVEL
 

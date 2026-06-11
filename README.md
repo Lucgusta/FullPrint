@@ -35,7 +35,17 @@ shopee_zpl_spooler/
 └── README.md
 ```
 
-## Instalação
+## Instalação nas máquinas dos operadores (produção)
+
+**Não use `git` nas máquinas de produção.** A distribuição é por instalador:
+
+1. Baixe o `FullPrintSetup.exe` da página de **[Releases](https://github.com/LeandroBossiniSoleira/FullPrint/releases/latest)**.
+2. Execute. Ele instala em `%LOCALAPPDATA%\FullPrint` (não pede admin), cria atalho no Menu Iniciar e na Área de Trabalho, e **já inclui o Tesseract OCR** — zero configuração manual.
+3. Pronto. **A partir daí o app se atualiza sozinho**: ao abrir, verifica se há versão nova no GitHub, baixa em segundo plano e aplica a atualização (silenciosa) quando o app é fechado.
+
+> A primeira instalação precisa ser feita pelo `FullPrintSetup.exe` (não por `git clone`), porque o auto-update reinstala por cima dele.
+
+## Instalação para desenvolvimento
 
 ```bash
 python -m venv .venv
@@ -47,7 +57,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`pywin32` instala apenas no Windows (marker em `requirements.txt`). Em outras plataformas, o serviço cai para **modo DEV** automaticamente.
+`pywin32` instala apenas no Windows (marker em `requirements.txt`). Em outras plataformas, o serviço cai para **modo DEV** automaticamente. Rodando do código-fonte o auto-update fica desativado (só age no `.exe` instalado).
 
 ## Execução
 
@@ -71,6 +81,31 @@ Edite `src/config/config.yaml`:
 - `printer.dev_mode: true`: força modo DEV mesmo no Windows (não imprime, grava arquivo).
 - `label_models`: lista de modelos disponíveis no dropdown.
 - `paths.default_input_dir`: pasta inicial do diálogo de anexar arquivo.
+
+## Como lançar uma nova versão
+
+O build do instalador é **automático** via GitHub Actions (`.github/workflows/release.yml`).
+
+1. Ajuste `src/version.py` se quiser (o CI sobrescreve com a tag de qualquer forma).
+2. Crie e publique a tag:
+   ```bash
+   git tag v1.2.0
+   git push origin v1.2.0
+   ```
+3. O CI (runner Windows) roda PyInstaller + embute o Tesseract + compila o Inno Setup e **publica o `FullPrintSetup.exe` no Release** correspondente.
+4. As máquinas dos operadores detectam a versão nova no próximo start e se atualizam sozinhas.
+
+> Use [versionamento semântico](https://semver.org/lang/pt-BR/) nas tags (`vMAJOR.MINOR.PATCH`). A tag **precisa** ser maior que a versão instalada para o auto-update disparar.
+
+Peças do pipeline:
+
+| Arquivo | Função |
+|---|---|
+| `src/version.py` | Fonte única da versão (injetada pela tag no build). |
+| `src/services/updater.py` | Verifica/baixa/aplica updates via GitHub Releases. |
+| `packaging/FullPrint.spec` | Empacotamento PyInstaller (gera o `.exe`). |
+| `packaging/installer.iss` | Instalador Inno Setup (bundle + Tesseract + atalhos). |
+| `.github/workflows/release.yml` | CI: compila e publica a cada tag `v*`. |
 
 ## Próximos passos (Fase 2)
 

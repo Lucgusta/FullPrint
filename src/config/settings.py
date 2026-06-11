@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from ..version import __version__
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = Path(__file__).with_name("config.yaml")
@@ -74,7 +76,9 @@ def load_settings(config_path: Path | None = None) -> Settings:
 
     return Settings(
         app_name=app.get("name", "Shopee ZPL Spooler"),
-        app_version=app.get("version", "0.1.0"),
+        # Versao vem sempre de src/version.py (fonte unica, injetada pelo CI no
+        # build). O campo `version` do config.yaml e ignorado para evitar drift.
+        app_version=__version__,
         theme=app.get("theme", "dark"),
         color_theme=app.get("color_theme", "blue"),
         printer_default=printer.get("default_name", ""),
