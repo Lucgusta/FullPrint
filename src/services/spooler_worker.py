@@ -14,9 +14,12 @@ log = get_logger("worker")
 
 @dataclass
 class PrintJob:
-    zpl_content: str
     printer_name: str
     job_name: str = "ZPL Lote"
+    zpl_content: str | None = None
+    # Builder lazy: a montagem do ZPL ocorre na thread do worker, mantendo
+    # a UI livre quando o lote tem milhares de etiquetas.
+    builder: Callable[[], str] | None = None
 
 
 _SENTINEL = object()
@@ -59,16 +62,22 @@ class PrintQueueManager:
     def _loop(self) -> None:
         while not self._stop_event.is_set():
             item = self._queue.get()
-            if item is _SENTINEL:
-                break
-            job: PrintJob = item  # type: ignore[assignment]
             try:
-                self.printer_service.print_zpl(job.zpl_content, job.printer_name, job.job_name)
-                self.status_callback("ok", f"Impressao concluida: {job.job_name}")
-            except PrinterError as exc:
-                self.status_callback("erro", f"Falha na impressao: {exc}")
-            except Exception as exc:  # noqa: BLE001
-                log.exception("Erro inesperado no worker")
-                self.status_callback("erro", f"Erro inesperado: {exc}")
+                if item is _SENTINEL:
+                    break
+                job: PrintJob = item  # type: ignore[assignment]
+                try:
+                    zpl = job.zpl_content
+                    if zpl is None and job.builder is not None:
+                        zpl = job.builder()
+                    if not zpl:
+                        raise PrinterError("Job sem conteudo ZPL.")
+                    self.printer_service.print_zpl(zpl, job.printer_name, job.job_name)
+                    self.status_callback("ok", f"Impressao concluida: {job.job_name}")
+                except PrinterError as exc:
+                    self.status_callback("erro", f"Falha na impressao: {exc}")
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("Erro inesperado no worker")
+                    self.status_callback("erro", f"Erro inesperado: {exc}")
             finally:
                 self._queue.task_done()
