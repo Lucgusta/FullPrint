@@ -23,10 +23,10 @@ datas = []
 # Assets do CustomTkinter / tkinterdnd2 (temas, dll do drag-and-drop).
 datas += collect_data_files("customtkinter")
 datas += collect_data_files("tkinterdnd2")
-# Configuracao e template ZPL do separador.
+# Configuracao e template ZPL da etiqueta.
 datas += [
     (os.path.join(ROOT, "src/config/config.yaml"), "src/config"),
-    (os.path.join(ROOT, "src/core/templates/separador.zpl"), "src/core/templates"),
+    (os.path.join(ROOT, "src/core/templates/etiqueta_produto_2up.zpl"), "src/core/templates"),
 ]
 
 hiddenimports = []
