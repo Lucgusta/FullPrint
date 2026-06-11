@@ -9,7 +9,11 @@ apps com Tkinter + OCR). O Inno Setup empacota essa pasta + Tesseract embutido.
 """
 import os
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
 
 # Caminhos do .spec sao resolvidos relativos a pasta do spec (packaging/);
 # ancoramos tudo na RAIZ do repo (um nivel acima) para invocar a partir dela.
@@ -36,10 +40,17 @@ hiddenimports += [
 
 block_cipher = None
 
+# O pyzbar carrega libzbar-64.dll (e a dependencia libiconv.dll) em runtime via
+# ctypes, a partir da PROPRIA pasta do pacote (os.path.dirname(__file__)).
+# collect_submodules so traz os .py -- sem as DLLs o app quebra em maquinas
+# limpas com "Could not find module 'libiconv.dll'". collect_dynamic_libs as
+# coleta e mantem o destino na subpasta pyzbar/, onde o pyzbar as procura.
+binaries = collect_dynamic_libs("pyzbar")
+
 a = Analysis(
     [os.path.join(ROOT, "src/main.py")],
     pathex=[ROOT],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -80,6 +91,7 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=True,
-    upx_exclude=[],
+    # UPX pode corromper DLLs nativas; nao comprimir as do zbar/iconv.
+    upx_exclude=["libzbar-64.dll", "libiconv.dll"],
     name="FullPrint",
 )
