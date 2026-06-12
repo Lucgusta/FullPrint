@@ -1,18 +1,17 @@
 # Shopee ZPL Spooler
 
-Automação de impressão de etiquetas ZPL da Shopee Full em impressoras Zebra (ZD220). Lê o arquivo `.txt` exportado, agrupa etiquetas por SKU, insere uma **etiqueta separadora** entre os grupos e envia o lote para a impressora.
+Automação de impressão de etiquetas ZPL da Shopee Full em impressoras Zebra (ZD220). Lê o arquivo `.txt` exportado da Shopee e o envia **byte a byte** para a impressora (pass-through fiel) — a impressão sai idêntica ao arquivo original. O preview mostra os SKUs (lidos do QR code de cada sticker) e a **imagem real** de cada etiqueta.
 
-> **Status**: Fase 1 (MVP). Roadmap completo em `shopee_zpl_architecture.md`.
+> **Status**: v0.2.x. A partir da 0.2.0 a impressão é pass-through puro: nada de OCR, nada de re-render.
 
-## Funcionalidades do MVP
+## Funcionalidades
 
 - Interface gráfica em **CustomTkinter** (tema dark).
 - Seleção de impressora (lista as locais do Windows via `win32print`).
-- Seleção de modelo de etiqueta (10x15 padrão Shopee, 10x10, 4x3).
 - Anexar arquivo TXT/ZPL via diálogo.
-- Parser robusto: extrai blocos `^XA…^XZ`, identifica SKU/descrição.
-- Agrupamento por SKU com preview em tela (SKU | Descrição | Qtd).
-- Geração do lote com etiqueta separadora a cada SKU.
+- **Impressão pass-through**: os bytes originais do arquivo vão direto para a impressora (RAW), sem decode/re-encode — fidelidade garantida por construção.
+- Preview por SKU ou individual: SKU Shopee lido do **QR code** de cada sticker (pyzbar), quantidade por SKU, e **imagem real do sticker** (recortada do bitmap GRF) ao selecionar uma linha.
+- **Seller SKU via catálogo manual**: duplo-clique numa linha cadastra o mapeamento SKU Shopee → Seller SKU (persistido em `data/sku_catalog.json`).
 - Impressão em **thread separada** (worker daemon + fila).
 - **Modo DEV** (Linux/macOS, ou win32print indisponível): grava o ZPL em `data/dev_output/` ao invés de mandar para impressora — útil para desenvolvimento.
 - Log de impressão em painel lateral e arquivo rotacionado (`logs/spooler.log`).
@@ -24,12 +23,12 @@ shopee_zpl_spooler/
 ├── src/
 │   ├── main.py
 │   ├── config/{settings.py, config.yaml}
-│   ├── core/{parser.py, agrupador.py, gerador.py, templates/separador.zpl}
-│   ├── services/{printer.py, spooler_worker.py}
+│   ├── core/{parser.py, agrupador.py, grf_decoder.py, sku_catalog.py}
+│   ├── services/{printer.py, spooler_worker.py, updater.py}
 │   ├── database/     # Fase 2
 │   ├── ui/{app.py, views/main_view.py}
-│   └── utils/{logger.py, zpl_utils.py}
-├── tests/test_parser.py
+│   └── utils/{logger.py, zpl_utils.py, runtime.py}
+├── tests/{test_parser.py, smoke_pipeline.py, smoke_grf.py, render_grf.py}
 ├── logs/  data/
 ├── requirements.txt
 └── README.md
@@ -40,7 +39,7 @@ shopee_zpl_spooler/
 **Não use `git` nas máquinas de produção.** A distribuição é por instalador:
 
 1. Baixe o `FullPrintSetup.exe` da página de **[Releases](https://github.com/LeandroBossiniSoleira/FullPrint/releases/latest)**.
-2. Execute. Ele instala em `%LOCALAPPDATA%\FullPrint` (não pede admin), cria atalho no Menu Iniciar e na Área de Trabalho, e **já inclui o Tesseract OCR** — zero configuração manual.
+2. Execute. Ele instala em `%LOCALAPPDATA%\FullPrint` (não pede admin) e cria atalho no Menu Iniciar e na Área de Trabalho — zero configuração manual.
 3. Pronto. **A partir daí o app se atualiza sozinho**: ao abrir, verifica se há versão nova no GitHub, baixa em segundo plano e aplica a atualização (silenciosa) quando o app é fechado.
 
 > A primeira instalação precisa ser feita pelo `FullPrintSetup.exe` (não por `git clone`), porque o auto-update reinstala por cima dele.
@@ -57,7 +56,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`pywin32` instala apenas no Windows (marker em `requirements.txt`). Em outras plataformas, o serviço cai para **modo DEV** automaticamente. Rodando do código-fonte o auto-update fica desativado (só age no `.exe` instalado).
+`pywin32` instala apenas no Windows (marker em `requirements.txt`). Em outras plataformas, o serviço cai para **modo DEV** automaticamente. No Linux, o pyzbar precisa do `libzbar0` do sistema (`apt install libzbar0`). Rodando do código-fonte o auto-update fica desativado (só age no `.exe` instalado).
 
 ## Execução
 
@@ -71,6 +70,10 @@ python src/main.py
 
 ```bash
 python -m unittest discover tests
+# Smoke com um TXT real da Shopee Full (valida o pass-through byte a byte):
+python tests/smoke_grf.py /caminho/arquivo_shopee.txt
+# Calibração visual dos crops de sticker (gera PNGs em data/dev_output/):
+python tests/render_grf.py /caminho/arquivo_shopee.txt
 ```
 
 ## Configuração
@@ -79,7 +82,6 @@ Edite `src/config/config.yaml`:
 
 - `printer.default_name`: impressora padrão (deixe vazio para usar a do Windows).
 - `printer.dev_mode: true`: força modo DEV mesmo no Windows (não imprime, grava arquivo).
-- `label_models`: lista de modelos disponíveis no dropdown.
 - `paths.default_input_dir`: pasta inicial do diálogo de anexar arquivo.
 
 ## Como lançar uma nova versão
@@ -92,7 +94,7 @@ O build do instalador é **automático** via GitHub Actions (`.github/workflows/
    git tag v1.2.0
    git push origin v1.2.0
    ```
-3. O CI (runner Windows) roda PyInstaller + embute o Tesseract + compila o Inno Setup e **publica o `FullPrintSetup.exe` no Release** correspondente.
+3. O CI (runner Windows) roda os testes + PyInstaller + compila o Inno Setup e **publica o `FullPrintSetup.exe` no Release** correspondente.
 4. As máquinas dos operadores detectam a versão nova no próximo start e se atualizam sozinhas.
 
 > Use [versionamento semântico](https://semver.org/lang/pt-BR/) nas tags (`vMAJOR.MINOR.PATCH`). A tag **precisa** ser maior que a versão instalada para o auto-update disparar.
@@ -104,12 +106,12 @@ Peças do pipeline:
 | `src/version.py` | Fonte única da versão (injetada pela tag no build). |
 | `src/services/updater.py` | Verifica/baixa/aplica updates via GitHub Releases. |
 | `packaging/FullPrint.spec` | Empacotamento PyInstaller (gera o `.exe`). |
-| `packaging/installer.iss` | Instalador Inno Setup (bundle + Tesseract + atalhos). |
-| `.github/workflows/release.yml` | CI: compila e publica a cada tag `v*`. |
+| `packaging/installer.iss` | Instalador Inno Setup (bundle + atalhos). |
+| `.github/workflows/release.yml` | CI: testa, compila e publica a cada tag `v*`. |
 
 ## Próximos passos (Fase 2)
 
 - Persistência em SQLite (lotes + reimpressão).
 - Refatorar parser sob `MarketplaceParser` para suportar Mercado Livre Full.
 - Barra de progresso real no worker.
-- Tabela com edição de quantidade antes de imprimir.
+- Agrupamento opcional por SKU na impressão (reordenar folhas inteiras + separadora), mantendo os trios ZPL originais intactos.

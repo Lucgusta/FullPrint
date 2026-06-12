@@ -1,5 +1,21 @@
 # Especificação Técnica e Arquitetura: Automação Logística ZPL (Shopee Full)
 
+> **ATUALIZAÇÃO v0.2.0 (2026-06-12)** — Este documento descreve a arquitetura
+> ORIGINAL do projeto e é mantido como histórico. A partir da v0.2.0:
+>
+> - **A impressão é pass-through**: os bytes originais do arquivo da Shopee vão
+>   direto para a impressora (RAW), sem re-render. O `gerador.py` e os
+>   templates ZPL citados abaixo foram **removidos**.
+> - **OCR (Tesseract) foi removido**. O SKU Shopee vem do QR code de cada
+>   sticker (`grf_decoder.py` + pyzbar); o Seller SKU vem do catálogo manual
+>   (`sku_catalog.py`). O preview mostra a imagem real do sticker recortada do
+>   bitmap GRF (`grf_decoder.crop_sticker`).
+> - O parse alimenta APENAS o preview — a impressão nunca depende dele.
+>
+> Motivação: o arquivo da Shopee Full já é ZPL válido e completo (bitmaps GRF
+> Z64); re-renderizar a partir de texto extraído por OCR produzia etiquetas
+> incorretas. Ver ADR `2026-06-12-impressao-pass-through-remocao-ocr` no vault.
+
 Como Arquiteto de Software, realizei a análise da sua demanda para o processamento e impressão inteligente de etiquetas ZPL da Shopee. Abaixo, detalho o projeto ponta a ponta para que possa ser implementado de forma escalável e segura.
 
 ## 1. Viabilidade Técnica

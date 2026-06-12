@@ -89,6 +89,39 @@ def _detectar_stickers(img: Image.Image) -> list[StickerInfo]:
     return stickers
 
 
+# Geometria do sticker em torno do QR (calibrada na folha real 816x1218:
+# QRs de ~172px com pitch vertical de ~236px -> ~64px de texto abaixo do QR;
+# colunas separadas por gap de apenas ~8px, dai a margem lateral pequena).
+CROP_MARGEM_X = 8
+CROP_MARGEM_TOPO = 4
+CROP_ALTURA_TEXTO = 58
+
+
+def _crop_clampado(imagem: Image.Image, x: int, y: int, w: int, h: int) -> Image.Image:
+    img_w, img_h = imagem.size
+    x = max(0, min(x, img_w - 1))
+    y = max(0, min(y, img_h - 1))
+    w = max(1, min(w, img_w - x))
+    h = max(1, min(h, img_h - y))
+    return imagem.crop((x, y, x + w, y + h))
+
+
+def crop_sticker(folha: Image.Image, st: StickerInfo) -> Image.Image:
+    """Recorta um sticker da folha, ancorado na posicao do QR.
+
+    Nao assume grade fixa: o recorte e o retangulo do QR expandido para os
+    lados (texto e pouco mais largo que o QR) e para baixo (4 linhas de
+    texto: Seller SKU, SKU e descricao em 2 linhas).
+    """
+    return _crop_clampado(
+        folha,
+        st.qr_left - CROP_MARGEM_X,
+        st.qr_top - CROP_MARGEM_TOPO,
+        st.qr_width + 2 * CROP_MARGEM_X,
+        st.qr_height + CROP_MARGEM_TOPO + CROP_ALTURA_TEXTO,
+    )
+
+
 def extrair_etiquetas(conteudo: str) -> list[EtiquetaGRF]:
     """Decodifica cada GRF do TXT e detecta seus QRs (stickers internos)."""
     etiquetas: list[EtiquetaGRF] = []

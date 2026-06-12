@@ -1,9 +1,9 @@
 """Cache persistente: SKU numerico do Shopee -> Seller SKU legível.
 
-Resolvendo a limitação de que o TXT não contém o Seller SKU como texto e
-o OCR e fragil em fontes pequenas, deixamos o usuário mapear manualmente
-pela UI (duplo-clique). O mapeamento é incremental: cada SKU novo é
-digitado uma vez e fica persistido para sempre.
+O TXT da Shopee Full não contém o Seller SKU como texto extraível (só
+rasterizado no bitmap), então o usuário mapeia manualmente pela UI
+(duplo-clique). O mapeamento é incremental: cada SKU novo é digitado
+uma vez e fica persistido para sempre.
 """
 from __future__ import annotations
 

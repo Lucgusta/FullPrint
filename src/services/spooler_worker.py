@@ -16,10 +16,11 @@ log = get_logger("worker")
 class PrintJob:
     printer_name: str
     job_name: str = "ZPL Lote"
-    zpl_content: str | None = None
+    # bytes = pass-through fiel do arquivo original; str = caminho legado.
+    zpl_content: str | bytes | None = None
     # Builder lazy: a montagem do ZPL ocorre na thread do worker, mantendo
     # a UI livre quando o lote tem milhares de etiquetas.
-    builder: Callable[[], str] | None = None
+    builder: Callable[[], str | bytes] | None = None
 
 
 _SENTINEL = object()

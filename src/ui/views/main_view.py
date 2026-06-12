@@ -9,8 +9,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import customtkinter as ctk
 
 from ...config.settings import Settings
+from ...core import grf_decoder
 from ...core.agrupador import EtiquetaAgrupador
-from ...core.gerador import GeradorLoteZPL
 from ...core.parser import ShopeeZPLParser
 from ...core.sku_catalog import SKUCatalog
 from ...services.printer import ZebraPrinterService
@@ -50,18 +50,19 @@ class MainView(ctk.CTkFrame):
             catalog=self.catalog,
         )
         self.agrupador = EtiquetaAgrupador()
-        self.gerador = GeradorLoteZPL(settings.templates_dir)
 
         self._arquivo_atual: Path | None = None
+        self._lote_bytes: bytes | None = None  # bytes originais p/ pass-through
         self._etiquetas_atuais: list = []
         self._grupos_atuais = None
+        self._iid_etiqueta: dict[str, object] = {}
+        self._ctk_img_atual = None  # referencia viva (evita GC da imagem Tk)
         self._modo_preview = "Por SKU"
         self._busy = False
         self._log_lines = 0
 
         self._build_layout()
         self._popular_impressoras()
-        self._popular_modelos()
         self.log_status("info", "Aplicacao iniciada.")
 
     # ------------------------------------------------------------------ layout
@@ -78,10 +79,6 @@ class MainView(ctk.CTkFrame):
         ctk.CTkLabel(topo, text="Impressora:").grid(row=0, column=0, padx=(12, 6), pady=10, sticky="w")
         self.cb_impressora = ctk.CTkComboBox(topo, values=["(carregando...)"], width=300)
         self.cb_impressora.grid(row=0, column=1, padx=6, pady=10, sticky="ew")
-
-        ctk.CTkLabel(topo, text="Modelo etiqueta:").grid(row=0, column=2, padx=(18, 6), pady=10, sticky="w")
-        self.cb_modelo = ctk.CTkComboBox(topo, values=["(carregando...)"], width=240)
-        self.cb_modelo.grid(row=0, column=3, padx=(6, 12), pady=10, sticky="ew")
 
         anexo = ctk.CTkFrame(self, corner_radius=8)
         anexo.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=6)
@@ -119,6 +116,7 @@ class MainView(ctk.CTkFrame):
         self.toggle_modo.grid(row=0, column=1, sticky="e")
 
         self._build_preview_tree(preview)
+        self._build_painel_imagem(preview)
 
         log_frame = ctk.CTkFrame(self, corner_radius=8, width=320)
         log_frame.grid(row=2, column=1, sticky="nsew", padx=(6, 12), pady=6)
@@ -188,7 +186,7 @@ class MainView(ctk.CTkFrame):
 
         self.tree = ttk.Treeview(
             container,
-            columns=("idx", "seller", "sku", "descricao", "qtd"),
+            columns=("idx", "seller", "sku", "qtd"),
             show="headings",
             style="Preview.Treeview",
             selectmode="browse",
@@ -196,21 +194,36 @@ class MainView(ctk.CTkFrame):
         self.tree.heading("idx", text="#")
         self.tree.heading("seller", text="Seller SKU")
         self.tree.heading("sku", text="SKU Shopee")
-        self.tree.heading("descricao", text="Descricao")
         self.tree.heading("qtd", text="Qtd")
         self.tree.column("idx", width=50, anchor="e", stretch=False)
-        self.tree.column("seller", width=170, anchor="w", stretch=False)
-        self.tree.column("sku", width=180, anchor="w", stretch=False)
-        self.tree.column("descricao", anchor="w")
+        self.tree.column("seller", width=200, anchor="w", stretch=False)
+        self.tree.column("sku", anchor="w")
         self.tree.column("qtd", width=60, anchor="e", stretch=False)
 
         # Duplo-clique numa linha abre dialog pra editar/cadastrar o Seller SKU
         self.tree.bind("<Double-Button-1>", self._on_editar_seller_sku)
+        # Selecao mostra a imagem real do sticker (recortada do bitmap GRF)
+        self.tree.bind("<<TreeviewSelect>>", self._on_selecionar_linha)
 
         vsb = ttk.Scrollbar(container, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
+
+    def _build_painel_imagem(self, parent: ctk.CTkFrame) -> None:
+        """Painel fixo abaixo da tabela: imagem real do sticker selecionado."""
+        painel = ctk.CTkFrame(parent, corner_radius=8, height=210, fg_color="#1f1f1f")
+        painel.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 10))
+        painel.grid_propagate(False)
+        painel.grid_columnconfigure(0, weight=1)
+        painel.grid_rowconfigure(0, weight=1)
+
+        self.lbl_imagem = ctk.CTkLabel(painel, text="Selecione uma linha para ver o sticker.")
+        self.lbl_imagem.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 0))
+        self.lbl_imagem_info = ctk.CTkLabel(
+            painel, text="", font=ctk.CTkFont(size=11), text_color="#9a9a9a"
+        )
+        self.lbl_imagem_info.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
 
     # ----------------------------------------------------------------- helpers
     def _popular_impressoras(self) -> None:
@@ -223,11 +236,6 @@ class MainView(ctk.CTkFrame):
             self.cb_impressora.set(padrao)
         else:
             self.cb_impressora.set(impressoras[0])
-
-    def _popular_modelos(self) -> None:
-        modelos = [m.nome for m in self.settings.label_models] or ["(nenhum)"]
-        self.cb_modelo.configure(values=modelos)
-        self.cb_modelo.set(modelos[0])
 
     def log_status(self, level: str, mensagem: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
@@ -249,7 +257,7 @@ class MainView(ctk.CTkFrame):
         self._busy = busy
         estado_processar = "disabled" if busy or not self._arquivo_atual else "normal"
         estado_anexar = "disabled" if busy else "normal"
-        estado_imprimir = "disabled" if busy or not self._grupos_atuais else "normal"
+        estado_imprimir = "disabled" if busy or not self._lote_bytes else "normal"
         self.btn_processar.configure(state=estado_processar)
         self.btn_anexar.configure(state=estado_anexar)
         self.btn_imprimir.configure(state=estado_imprimir)
@@ -272,8 +280,12 @@ class MainView(ctk.CTkFrame):
         if not caminho:
             return
         self._arquivo_atual = Path(caminho)
+        self._lote_bytes = None
         self._etiquetas_atuais = []
         self._grupos_atuais = None
+        self._iid_etiqueta = {}
+        self.tree.delete(*self.tree.get_children())
+        self._mostrar_imagem(None, "Selecione uma linha para ver o sticker.")
         self.lbl_arquivo.configure(text=str(self._arquivo_atual))
         self.btn_processar.configure(state="normal")
         self.btn_imprimir.configure(state="disabled")
@@ -292,16 +304,19 @@ class MainView(ctk.CTkFrame):
 
         def worker() -> None:
             try:
-                etiquetas = self.parser.parse_file(arquivo)
+                # Le os bytes UMA vez: o mesmo buffer alimenta o parse (preview)
+                # e a impressao (pass-through fiel, sem decode/re-encode).
+                dados = arquivo.read_bytes()
+                etiquetas = self.parser.parse_bytes(dados)
                 grupos = self.agrupador.agrupar_por_sku(etiquetas) if etiquetas else None
-                self.after(0, self._on_processar_concluido, etiquetas, grupos, None)
+                self.after(0, self._on_processar_concluido, dados, etiquetas, grupos, None)
             except Exception as exc:  # noqa: BLE001
                 log.exception("Erro no parse")
-                self.after(0, self._on_processar_concluido, None, None, exc)
+                self.after(0, self._on_processar_concluido, None, None, None, exc)
 
         threading.Thread(target=worker, name="ParseWorker", daemon=True).start()
 
-    def _on_processar_concluido(self, etiquetas, grupos, erro) -> None:
+    def _on_processar_concluido(self, dados, etiquetas, grupos, erro) -> None:
         self._set_busy(False)
         if erro is not None:
             messagebox.showerror("Erro ao processar arquivo", str(erro))
@@ -314,6 +329,7 @@ class MainView(ctk.CTkFrame):
             self.lbl_resumo.configure(text="Arquivo sem etiquetas ZPL.")
             return
 
+        self._lote_bytes = dados
         self._etiquetas_atuais = etiquetas
         self._grupos_atuais = grupos
         self._renderizar_preview()
@@ -335,29 +351,26 @@ class MainView(ctk.CTkFrame):
             f"Processado: {len(grupos)} SKUs / {blocos} etiquetas / {stickers} stickers.",
         )
 
-    def _seller_label(self, sku: str, fallback_ocr: str = "") -> str:
-        """Cache manual tem prioridade; cai pra OCR (sugestao); senao '?'."""
-        manual = self.catalog.get(sku)
-        if manual:
-            return manual  # confiavel
-        if fallback_ocr:
-            return f"~{fallback_ocr}"  # ~prefixo = sugestao do OCR
-        return "?"
+    def _seller_label(self, sku: str) -> str:
+        """Cache manual (catalogo) ou '?' — sem sugestao de OCR."""
+        return self.catalog.get(sku) or "?"
 
     def _renderizar_preview(self) -> None:
         # Limpa em bloco — Treeview lida com isso sem o custo dos widgets CTk.
         self.tree.delete(*self.tree.get_children())
+        self._iid_etiqueta = {}
         if self._modo_preview == "Individual":
             itens = self._etiquetas_atuais
             total = len(itens)
             exibir = min(total, MAX_PREVIEW_ROWS)
             for i, et in enumerate(itens[:exibir], start=1):
-                seller = self._seller_label(et.sku, et.metadados.get("seller_ocr", ""))
+                iid = f"sku::{et.sku}::{i}"
+                self._iid_etiqueta[iid] = et
                 self.tree.insert(
                     "",
                     "end",
-                    iid=f"sku::{et.sku}::{i}",
-                    values=(f"{i:03d}", seller, et.sku, et.descricao, 1),
+                    iid=iid,
+                    values=(f"{i:03d}", self._seller_label(et.sku), et.sku, 1),
                 )
             unidade = "stickers"
         else:
@@ -365,18 +378,19 @@ class MainView(ctk.CTkFrame):
             itens = list(grupos.values())
             total = len(itens)
             exibir = min(total, MAX_PREVIEW_ROWS)
-            # Procura OCR do 1o sticker daquele SKU para usar como sugestao
-            seller_ocr_por_sku: dict[str, str] = {}
+            # 1a etiqueta de cada SKU: fonte da imagem do sticker no painel.
+            primeira_por_sku: dict[str, object] = {}
             for et in self._etiquetas_atuais:
-                if et.sku not in seller_ocr_por_sku:
-                    seller_ocr_por_sku[et.sku] = et.metadados.get("seller_ocr", "")
+                if et.sku not in primeira_por_sku:
+                    primeira_por_sku[et.sku] = et
             for i, grupo in enumerate(itens[:exibir], start=1):
-                seller = self._seller_label(grupo.sku, seller_ocr_por_sku.get(grupo.sku, ""))
+                iid = f"sku::{grupo.sku}"
+                self._iid_etiqueta[iid] = primeira_por_sku.get(grupo.sku)
                 self.tree.insert(
                     "",
                     "end",
-                    iid=f"sku::{grupo.sku}",
-                    values=(f"{i:03d}", seller, grupo.sku, grupo.descricao, grupo.qtd),
+                    iid=iid,
+                    values=(f"{i:03d}", self._seller_label(grupo.sku), grupo.sku, grupo.qtd),
                 )
             unidade = "SKUs"
         if total > exibir:
@@ -416,25 +430,56 @@ class MainView(ctk.CTkFrame):
         )
 
     def _on_imprimir(self) -> None:
-        if self._busy or not self._etiquetas_atuais:
+        if self._busy or not self._lote_bytes:
             return
         impressora = self.cb_impressora.get()
         if not impressora or impressora.startswith("("):
             messagebox.showwarning("Impressora", "Selecione uma impressora valida.")
             return
         lote_id = datetime.now().strftime("%Y%m%d%H%M%S")
-        etiquetas = self._etiquetas_atuais
-        gerador = self.gerador
 
-        # Builder lazy: a montagem do ZPL acontece dentro da thread do worker.
-        # Ordem original do arquivo, sem agrupar e sem separador.
-        def builder() -> str:
-            return gerador.gerar_zpl_ordem_original(etiquetas, lote_id=lote_id)
-
+        # Pass-through fiel: envia os bytes ORIGINAIS do arquivo da Shopee,
+        # na ordem original, sem re-render nem re-encode.
         job = PrintJob(
             printer_name=impressora,
             job_name=f"Lote-{lote_id}",
-            builder=builder,
+            zpl_content=self._lote_bytes,
         )
         self.worker.submit(job)
         self.log_status("info", f"Lote {lote_id} enviado para fila de impressao.")
+
+    # ----------------------------------------------------------- painel imagem
+    def _on_selecionar_linha(self, _event=None) -> None:
+        sel = self.tree.selection()
+        if not sel:
+            return
+        et = self._iid_etiqueta.get(sel[0])
+        if et is None:
+            return
+        folha = et.metadados.get("imagem_folha")
+        if folha is None:
+            self._mostrar_imagem(None, "Sem imagem para este formato (ZPL texto).")
+            return
+        st = et.metadados.get("sticker")
+        if st is not None:
+            img = grf_decoder.crop_sticker(folha, st)
+            legenda = f"SKU {et.sku}  -  folha {et.metadados.get('grf_indice', '?')}"
+        else:
+            img = folha  # QR nao detectado: mostra a folha inteira
+            legenda = f"{et.sku}  -  folha inteira (QR nao detectado)"
+        self._mostrar_imagem(img, legenda)
+
+    def _mostrar_imagem(self, img, legenda: str) -> None:
+        if img is None:
+            self._ctk_img_atual = None
+            self.lbl_imagem.configure(image=None, text=legenda)
+            self.lbl_imagem_info.configure(text="")
+            return
+        img = img.convert("L")
+        w, h = img.size
+        # Cabe no painel (~210px de altura, com folga p/ legenda); sem upscale.
+        fator = min(170 / h, 760 / w, 1.0)
+        tamanho = (max(1, int(w * fator)), max(1, int(h * fator)))
+        self._ctk_img_atual = ctk.CTkImage(light_image=img, dark_image=img, size=tamanho)
+        self.lbl_imagem.configure(image=self._ctk_img_atual, text="")
+        self.lbl_imagem_info.configure(text=legenda)

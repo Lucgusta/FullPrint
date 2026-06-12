@@ -7,7 +7,6 @@
 ;
 ; Pre-requisitos no diretorio (produzidos pelo CI antes de compilar):
 ;   dist\FullPrint\            <- saida do PyInstaller (one-folder)
-;   packaging\tesseract\       <- Tesseract portatil + tessdata (por, eng)
 
 #ifndef AppVersion
   #define AppVersion "0.0.0-dev"
@@ -44,7 +43,11 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 
 [Files]
 Source: "dist\FullPrint\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "packaging\tesseract\*"; DestDir: "{app}\tesseract"; Flags: recursesubdirs createallsubdirs ignoreversion
+
+[InstallDelete]
+; Versoes <= 0.1.x embarcavam o Tesseract OCR (~100MB). O OCR foi removido na
+; 0.2.0; limpa a pasta orfa no upgrade in-place.
+Type: filesandordirs; Name: "{app}\tesseract"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

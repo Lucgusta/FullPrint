@@ -1,4 +1,4 @@
-"""Smoke test: pipeline completo parse -> agrupar -> gerar -> imprimir (DEV)."""
+"""Smoke test: modo texto parse -> preview -> impressao pass-through (DEV)."""
 from __future__ import annotations
 
 import sys
@@ -9,7 +9,6 @@ sys.path.insert(0, str(ROOT))
 
 from src.config.settings import load_settings  # noqa: E402
 from src.core.agrupador import EtiquetaAgrupador  # noqa: E402
-from src.core.gerador import GeradorLoteZPL  # noqa: E402
 from src.core.parser import ShopeeZPLParser  # noqa: E402
 from src.services.printer import ZebraPrinterService  # noqa: E402
 
@@ -22,34 +21,36 @@ def main() -> int:
         return 1
 
     parser = ShopeeZPLParser(encoding_primario=settings.printer_encoding)
-    etiquetas = parser.parse_file(txt)
+    dados = txt.read_bytes()
+    etiquetas = parser.parse_bytes(dados)
     print(f"[parse] {len(etiquetas)} etiquetas extraidas")
     for e in etiquetas:
-        print(f"  - idx={e.indice:02d} sku={e.sku} desc={e.descricao[:40]!r}")
+        print(f"  - idx={e.indice:02d} sku={e.sku}")
 
     agrupador = EtiquetaAgrupador()
     grupos = agrupador.agrupar_por_sku(etiquetas)
     print(f"[agrupar] {len(grupos)} grupos:")
-    for sku, desc, qtd in agrupador.resumo(grupos):
-        print(f"  - {sku} ({qtd}x) {desc[:40]!r}")
+    for sku, seller, qtd in agrupador.resumo(grupos):
+        print(f"  - {sku} ({qtd}x) seller={seller or '?'}")
 
-    gerador = GeradorLoteZPL(templates_dir=settings.templates_dir)
-    zpl_final = gerador.gerar_zpl_final(grupos, lote_id="SMOKE")
-    n_blocos = zpl_final.count("^XA")
-    print(f"[gerar] {len(zpl_final)} bytes, {n_blocos} blocos ^XA (esperado: {len(grupos) + len(etiquetas)})")
-
+    # Impressao: pass-through dos bytes ORIGINAIS do arquivo.
     printer = ZebraPrinterService(
         encoding=settings.printer_encoding,
         dev_mode=True,
         dev_output_dir=settings.printer_dev_output_dir,
     )
-    printer.print_zpl(zpl_final, printer_name="[DEV]", job_name="SMOKE-TEST")
+    printer.print_zpl(dados, printer_name="[DEV]", job_name="SMOKE-TEST")
 
     saidas = sorted(settings.printer_dev_output_dir.glob("*SMOKE*.zpl"))
     if not saidas:
         print("FALHA: nenhum arquivo gerado em data/dev_output/")
         return 2
-    print(f"[print] OK -> {saidas[-1]}")
+    saida = saidas[-1]
+    if saida.read_bytes() != dados:
+        print(f"FALHA: saida {saida} difere do arquivo fonte (pass-through quebrado)")
+        return 3
+    print(f"[print] OK -> {saida}")
+    print(f"[byte-compare] OK: saida identica ao fonte ({len(dados)} bytes)")
     return 0
 
 

@@ -14,7 +14,6 @@ from .parser import EtiquetaZPL
 @dataclass
 class GrupoSKU:
     sku: str
-    descricao: str
     seller_sku: str = ""
     etiquetas: list[str] = field(default_factory=list)
 
@@ -35,18 +34,12 @@ class EtiquetaAgrupador:
         for et in etiquetas:
             grupo = grupos.get(et.sku)
             if grupo is None:
-                grupo = GrupoSKU(
-                    sku=et.sku,
-                    descricao=et.descricao,
-                    seller_sku=et.seller_sku,
-                )
+                grupo = GrupoSKU(sku=et.sku, seller_sku=et.seller_sku)
                 grupos[et.sku] = grupo
             grupo.etiquetas.append(et.zpl_raw)
-            if not grupo.descricao and et.descricao:
-                grupo.descricao = et.descricao
             if not grupo.seller_sku and et.seller_sku:
                 grupo.seller_sku = et.seller_sku
         return grupos
 
     def resumo(self, grupos: "OrderedDict[str, GrupoSKU]") -> list[tuple[str, str, int]]:
-        return [(g.sku, g.descricao, g.qtd) for g in grupos.values()]
+        return [(g.sku, g.seller_sku, g.qtd) for g in grupos.values()]

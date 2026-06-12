@@ -1,65 +1,47 @@
-"""Experimento: decodifica blocos ~DG Z64 da Shopee e gera PNGs para inspecao.
+"""Ferramenta de calibracao: renderiza folhas GRF e os crops dos stickers.
 
 Uso:
     python tests/render_grf.py [arquivo.txt]
 
-Sem argumento, usa o TXT em data/exemplo_shopee.txt; passando o caminho,
-processa o arquivo escolhido. Salva no maximo 3 etiquetas em data/dev_output/.
+Sem argumento, usa data/exemplo_shopee.txt. Salva em data/dev_output/:
+  - folha_NN.png            (ate 3 folhas inteiras)
+  - sticker_NN_MM_<sku>.png (crops via grf_decoder.crop_sticker)
+
+Use com o TXT real da Shopee para conferir visualmente se a grade 2x5 do
+crop_sticker esta recortando a celula certa de cada QR.
 """
 from __future__ import annotations
 
-import base64
-import re
 import sys
-import zlib
 from pathlib import Path
 
-from PIL import Image
-
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "data" / "dev_output"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
-MAX_PNG = 3
+sys.path.insert(0, str(ROOT))
 
-PATTERN = re.compile(
-    r"~DG[^,]+,(?P<total>\d+),(?P<row>\d+),:Z64:(?P<b64>[A-Za-z0-9+/=]+):(?P<crc>[0-9A-Fa-f]+)",
-    re.DOTALL,
-)
+from src.core import grf_decoder  # noqa: E402
+
+OUT_DIR = ROOT / "data" / "dev_output"
+MAX_FOLHAS = 3
 
 
 def render(path: Path) -> None:
-    conteudo = path.read_text(encoding="utf-8")
-    blocos = list(PATTERN.finditer(conteudo))
-    print(f"[scan] {len(blocos)} blocos ~DG Z64 em {path.name}")
-    if not blocos:
-        return
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    conteudo = path.read_bytes().decode("utf-8", errors="replace")
+    folhas = grf_decoder.extrair_etiquetas(conteudo)
+    print(f"[scan] {len(folhas)} folhas GRF em {path.name}")
 
-    for idx, m in enumerate(blocos[:MAX_PNG], start=1):
-        total = int(m["total"])
-        row_bytes = int(m["row"])
-        try:
-            comprimido = base64.b64decode(m["b64"])
-            grf = zlib.decompress(comprimido)
-        except Exception as exc:  # noqa: BLE001
-            print(f"  #{idx}: falha decodificar ({exc})")
-            continue
-
-        if len(grf) != total:
-            print(f"  #{idx}: aviso tamanho {len(grf)} != {total}")
-
-        width = row_bytes * 8
-        height = len(grf) // row_bytes
-        try:
-            img = Image.frombytes("1", (width, height), grf)
-            # GRF: bit 1 = tinta (preto). PIL "1" frombytes: bit 1 = branco. Inverter.
-            img = img.point(lambda p: 0 if p > 0 else 255).convert("1")
-        except Exception as exc:  # noqa: BLE001
-            print(f"  #{idx}: falha render ({exc})")
-            continue
-
-        out = OUT_DIR / f"etiqueta_{idx:02d}.png"
-        img.save(out)
-        print(f"  #{idx}: {width}x{height} -> {out}")
+    for folha in folhas[:MAX_FOLHAS]:
+        out = OUT_DIR / f"folha_{folha.indice:02d}.png"
+        folha.imagem.save(out)
+        print(f"  folha #{folha.indice}: {folha.largura}x{folha.altura}, "
+              f"{len(folha.stickers)} QRs -> {out}")
+        for j, st in enumerate(folha.stickers, start=1):
+            crop = grf_decoder.crop_sticker(folha.imagem, st)
+            sku_slug = "".join(c if c.isalnum() else "_" for c in st.sku)[:24]
+            out_st = OUT_DIR / f"sticker_{folha.indice:02d}_{j:02d}_{sku_slug}.png"
+            crop.save(out_st)
+            print(f"    sticker {j}: sku={st.sku} qr=({st.qr_left},{st.qr_top}) "
+                  f"crop={crop.size} -> {out_st.name}")
 
 
 def main() -> int:

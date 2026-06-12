@@ -45,17 +45,11 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Rodar testes
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
       - name: Build do executavel (PyInstaller)
         run: pyinstaller packaging/FullPrint.spec --noconfirm
-
-      - name: Preparar Tesseract embutido (binario + idioma por)
-        shell: pwsh
-        run: |
-          choco install tesseract --no-progress -y
-          $tess = "C:\Program Files\Tesseract-OCR"
-          Invoke-WebRequest -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/por.traineddata" -OutFile "$tess\tessdata\por.traineddata"
-          New-Item -ItemType Directory -Force -Path packaging\tesseract | Out-Null
-          Copy-Item "$tess\*" packaging\tesseract -Recurse -Force
 
       - name: Compilar instalador (Inno Setup)
         shell: pwsh

@@ -5,7 +5,7 @@ Invocar a partir da RAIZ do repositorio:
     pyinstaller packaging/FullPrint.spec --noconfirm
 
 Gera one-folder em `dist/FullPrint/` (mais rapido e estavel que one-file para
-apps com Tkinter + OCR). O Inno Setup empacota essa pasta + Tesseract embutido.
+apps com Tkinter). O Inno Setup empacota essa pasta.
 """
 import os
 
@@ -23,10 +23,9 @@ datas = []
 # Assets do CustomTkinter / tkinterdnd2 (temas, dll do drag-and-drop).
 datas += collect_data_files("customtkinter")
 datas += collect_data_files("tkinterdnd2")
-# Configuracao e template ZPL da etiqueta.
+# Configuracao do app.
 datas += [
     (os.path.join(ROOT, "src/config/config.yaml"), "src/config"),
-    (os.path.join(ROOT, "src/core/templates/etiqueta_produto_2up.zpl"), "src/core/templates"),
 ]
 
 hiddenimports = []
@@ -34,7 +33,6 @@ hiddenimports += collect_submodules("pyzbar")
 hiddenimports += [
     "win32print",
     "win32ui",
-    "pytesseract",
     "PIL._tkinter_finder",
 ]
 

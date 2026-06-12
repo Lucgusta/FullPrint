@@ -1,10 +1,11 @@
-"""Smoke test: pipeline GRF (Shopee Full) parse -> OCR -> agrupa -> gera -> grava DEV.
+"""Smoke test: GRF (Shopee Full) parse -> preview -> impressao pass-through (DEV).
 
 Uso:
     python tests/smoke_grf.py <arquivo.txt>
 
-Sem argumento, tenta `data/exemplo_grf.txt`. Use o seu TXT real da Shopee Full
-para validar a integracao com QR + OCR antes de imprimir de verdade.
+Sem argumento, tenta `data/exemplo_grf.txt`. Use o seu TXT real da Shopee Full.
+Valida que o que vai para a "impressora" (dev_output) e IDENTICO byte a byte
+ao arquivo fonte — a garantia central do pass-through.
 """
 from __future__ import annotations
 
@@ -17,7 +18,6 @@ sys.path.insert(0, str(ROOT))
 
 from src.config.settings import load_settings  # noqa: E402
 from src.core.agrupador import EtiquetaAgrupador  # noqa: E402
-from src.core.gerador import GeradorLoteZPL  # noqa: E402
 from src.core.grf_decoder import has_grf_z64  # noqa: E402
 from src.core.parser import ShopeeZPLParser  # noqa: E402
 from src.services.printer import ZebraPrinterService  # noqa: E402
@@ -39,42 +39,44 @@ def main() -> int:
         progress_callback=lambda m: print(f"  [progress] {m}"),
     )
 
-    conteudo = parser._ler_com_fallback(txt)
+    dados = txt.read_bytes()
+    conteudo = parser._decodificar_com_fallback(dados)
     print(f"[detect] has_grf_z64={has_grf_z64(conteudo)}")
     if not has_grf_z64(conteudo):
         print("FALHA: arquivo nao parece GRF (sem ~DG :Z64:)")
         return 2
 
     t0 = time.perf_counter()
-    etiquetas = parser.parse_content(conteudo)
+    etiquetas = parser.parse_bytes(dados)
     dt = time.perf_counter() - t0
-    print(f"[parse] {len(etiquetas)} etiquetas em {dt:.1f}s")
+    print(f"[parse] {len(etiquetas)} stickers em {dt:.1f}s")
 
     grupos = EtiquetaAgrupador().agrupar_por_sku(etiquetas)
-    total_stickers = sum(g.total_stickers for g in grupos.values())
-    print(f"[agrupar] {len(grupos)} SKUs / {total_stickers} stickers totais:")
+    print(f"[agrupar] {len(grupos)} SKUs:")
     for g in list(grupos.values())[:5]:
-        print(f"  - {g.sku[:32]:32s} | {g.descricao[:42]:42s} | {g.qtd}x = {g.total_stickers} stickers")
+        seller = g.seller_sku or "?"
+        print(f"  - {g.sku[:40]:40s} | seller={seller[:20]:20s} | {g.qtd} stickers")
     if len(grupos) > 5:
         print(f"  ... +{len(grupos)-5} SKUs")
 
-    gerador = GeradorLoteZPL(settings.templates_dir)
-    # Caminho GRF: 1 EtiquetaZPL = 1 sticker; gerador deduplica pelo grf_indice
-    # para nao reimprimir o GRF inteiro N vezes (cada GRF imprime N stickers automaticamente).
-    zpl_final = gerador.gerar_zpl_ordem_original(etiquetas, lote_id="SMOKE-GRF")
-    print(f"[gerar] {len(zpl_final)} bytes ({zpl_final.count('^XA')} blocos ^XA, {zpl_final.count('~DG')} GRFs)")
-
+    # Impressao: pass-through dos bytes ORIGINAIS do arquivo (sem re-render).
     printer = ZebraPrinterService(
         encoding=settings.printer_encoding,
         dev_mode=True,
         dev_output_dir=settings.printer_dev_output_dir,
     )
-    printer.print_zpl(zpl_final, printer_name="[DEV]", job_name="SMOKE-GRF")
+    printer.print_zpl(dados, printer_name="[DEV]", job_name="SMOKE-GRF")
     saidas = sorted(settings.printer_dev_output_dir.glob("*SMOKE_GRF*.zpl"))
     if not saidas:
         print("FALHA: nao gerou arquivo em data/dev_output/")
         return 3
-    print(f"[print] OK -> {saidas[-1]}")
+    saida = saidas[-1]
+
+    if saida.read_bytes() != dados:
+        print(f"FALHA: saida {saida} difere do arquivo fonte (pass-through quebrado)")
+        return 4
+    print(f"[print] OK -> {saida}")
+    print(f"[byte-compare] OK: saida identica ao fonte ({len(dados)} bytes)")
     return 0
 
 
