@@ -1,8 +1,11 @@
 # Shopee ZPL Spooler
 
-Automação de impressão de etiquetas ZPL da Shopee Full em impressoras Zebra (ZD220). Lê o arquivo `.txt` exportado da Shopee e o envia **byte a byte** para a impressora (pass-through fiel) — a impressão sai idêntica ao arquivo original. O preview mostra os SKUs (lidos do QR code de cada sticker) e a **imagem real** de cada etiqueta.
+Automação de impressão de etiquetas ZPL da Shopee Full em impressoras Zebra (ZD220). Lê o arquivo `.txt` exportado da Shopee e imprime conforme o **modelo de etiqueta** configurado:
 
-> **Status**: v0.2.x. A partir da 0.2.0 a impressão é pass-through puro: nada de OCR, nada de re-render.
+- **Fiel (10x15 Shopee)**: envia o arquivo **byte a byte** para a impressora (pass-through) — sai idêntico ao original. Para quem usa a bobina padrão da Shopee.
+- **Composto (bobina própria)**: re-monta as etiquetas no tamanho/layout da sua bobina (ex.: 50x25mm, 2 colunas). Cada sticker (QR + texto) é recortado do bitmap original (pixels idênticos, **sem OCR**) e reposicionado, com **1 bloco de impressão por linha** — corrige impressão fora do padrão e etiquetas faltando em bobinas menores.
+
+> **Status**: v0.3.x. Modelos de etiqueta configuráveis pelo usuário; preview mostra a etiqueta exatamente como vai sair.
 
 ## Funcionalidades
 
@@ -23,7 +26,8 @@ shopee_zpl_spooler/
 ├── src/
 │   ├── main.py
 │   ├── config/{settings.py, config.yaml}
-│   ├── core/{parser.py, agrupador.py, grf_decoder.py, sku_catalog.py}
+│   ├── core/{parser.py, agrupador.py, grf_decoder.py, sku_catalog.py,
+│   │         label_models.py, label_renderer.py}
 │   ├── services/{printer.py, spooler_worker.py, updater.py}
 │   ├── database/     # Fase 2
 │   ├── ui/{app.py, views/main_view.py}
@@ -83,6 +87,8 @@ Edite `src/config/config.yaml`:
 - `printer.default_name`: impressora padrão (deixe vazio para usar a do Windows).
 - `printer.dev_mode: true`: força modo DEV mesmo no Windows (não imprime, grava arquivo).
 - `paths.default_input_dir`: pasta inicial do diálogo de anexar arquivo.
+
+Os **modelos de etiqueta** são gerenciados pela própria interface (botão "Configurar...") e salvos em `data/label_models.json` — dimensões da bobina, colunas, margens e tamanho do QR. Use "Imprimir teste" para calibrar o alinhamento na bobina real.
 
 ## Como lançar uma nova versão
 

@@ -122,6 +122,36 @@ def crop_sticker(folha: Image.Image, st: StickerInfo) -> Image.Image:
     )
 
 
+# Quiet zone (margem branca) ao redor do QR para manter legibilidade.
+CROP_QR_QUIET = 6
+
+
+def crop_qr(folha: Image.Image, st: StickerInfo) -> Image.Image:
+    """Recorta apenas o QR (com quiet zone) — para reposicionar no layout novo."""
+    return _crop_clampado(
+        folha,
+        st.qr_left - CROP_QR_QUIET,
+        st.qr_top - CROP_QR_QUIET,
+        st.qr_width + 2 * CROP_QR_QUIET,
+        st.qr_height + 2 * CROP_QR_QUIET,
+    )
+
+
+def crop_texto(folha: Image.Image, st: StickerInfo) -> Image.Image:
+    """Recorta o bloco de texto (Seller SKU, SKU, descricao) logo abaixo do QR.
+
+    Mesma largura do QR (o texto da Shopee fica na coluna do QR, sem invadir
+    a coluna vizinha). O renderizador apara o espaco branco depois.
+    """
+    return _crop_clampado(
+        folha,
+        st.qr_left - CROP_MARGEM_X,
+        st.qr_top + st.qr_height,
+        st.qr_width + 2 * CROP_MARGEM_X,
+        CROP_ALTURA_TEXTO,
+    )
+
+
 def extrair_etiquetas(conteudo: str) -> list[EtiquetaGRF]:
     """Decodifica cada GRF do TXT e detecta seus QRs (stickers internos)."""
     etiquetas: list[EtiquetaGRF] = []

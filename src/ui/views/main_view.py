@@ -9,13 +9,15 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import customtkinter as ctk
 
 from ...config.settings import Settings
-from ...core import grf_decoder
+from ...core import grf_decoder, label_renderer
 from ...core.agrupador import EtiquetaAgrupador
+from ...core.label_models import MODO_PASS_THROUGH, LabelModelStore
 from ...core.parser import ShopeeZPLParser
 from ...core.sku_catalog import SKUCatalog
 from ...services.printer import ZebraPrinterService
 from ...services.spooler_worker import PrintJob, PrintQueueManager
 from ...utils.logger import get_logger
+from .label_config import LabelConfigDialog
 
 log = get_logger("ui.main")
 
@@ -41,8 +43,10 @@ class MainView(ctk.CTkFrame):
 
         # Catalogo persistente: SKU numerico Shopee -> Seller SKU manual.
         # Constroi-se ao longo do uso: duplo-clique numa linha do preview salva.
-        cache_path = Path(settings.printer_dev_output_dir).parent / "sku_catalog.json"
-        self.catalog = SKUCatalog(cache_path)
+        data_dir = Path(settings.printer_dev_output_dir).parent
+        self.catalog = SKUCatalog(data_dir / "sku_catalog.json")
+        # Modelos de etiqueta configuraveis (fiel 10x15 ou composto p/ bobina propria).
+        self.label_store = LabelModelStore(data_dir / "label_models.json")
 
         self.parser = ShopeeZPLParser(
             encoding_primario=settings.printer_encoding,
@@ -63,6 +67,7 @@ class MainView(ctk.CTkFrame):
 
         self._build_layout()
         self._popular_impressoras()
+        self._popular_modelos()
         self.log_status("info", "Aplicacao iniciada.")
 
     # ------------------------------------------------------------------ layout
@@ -79,6 +84,12 @@ class MainView(ctk.CTkFrame):
         ctk.CTkLabel(topo, text="Impressora:").grid(row=0, column=0, padx=(12, 6), pady=10, sticky="w")
         self.cb_impressora = ctk.CTkComboBox(topo, values=["(carregando...)"], width=300)
         self.cb_impressora.grid(row=0, column=1, padx=6, pady=10, sticky="ew")
+
+        ctk.CTkLabel(topo, text="Modelo:").grid(row=0, column=2, padx=(18, 6), pady=10, sticky="w")
+        self.cb_modelo = ctk.CTkOptionMenu(topo, values=["..."], command=self._on_modelo_selecionado, width=220)
+        self.cb_modelo.grid(row=0, column=3, padx=6, pady=10, sticky="ew")
+        self.btn_config = ctk.CTkButton(topo, text="Configurar...", width=110, command=self._abrir_config)
+        self.btn_config.grid(row=0, column=4, padx=(6, 12), pady=10)
 
         anexo = ctk.CTkFrame(self, corner_radius=8)
         anexo.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=6)
@@ -236,6 +247,33 @@ class MainView(ctk.CTkFrame):
             self.cb_impressora.set(padrao)
         else:
             self.cb_impressora.set(impressoras[0])
+
+    def _popular_modelos(self) -> None:
+        modelos = self.label_store.listar()
+        self._nome_modelo_por_id = {m.id: m.nome for m in modelos}
+        self._id_modelo_por_nome = {m.nome: m.id for m in modelos}
+        self.cb_modelo.configure(values=[m.nome for m in modelos])
+        self.cb_modelo.set(self.label_store.ativo().nome)
+
+    def _on_modelo_selecionado(self, nome: str) -> None:
+        model_id = self._id_por_nome_modelo(nome)
+        if model_id:
+            self.label_store.set_ativo(model_id)
+            m = self.label_store.ativo()
+            self.log_status("info", f"Modelo de etiqueta: {m.nome} ({m.modo}).")
+            # Atualiza o preview da linha selecionada para o novo modelo.
+            self._on_selecionar_linha()
+
+    def _id_por_nome_modelo(self, nome: str) -> str | None:
+        return getattr(self, "_id_modelo_por_nome", {}).get(nome)
+
+    def _abrir_config(self) -> None:
+        LabelConfigDialog(
+            self,
+            store=self.label_store,
+            on_change=self._popular_modelos,
+            on_test=self._imprimir_teste,
+        )
 
     def log_status(self, level: str, mensagem: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
@@ -429,24 +467,67 @@ class MainView(ctk.CTkFrame):
             f"Seller SKU '{novo}' salvo para {sku_numerico} (catalogo: {self.catalog.total()} mapeamentos).",
         )
 
-    def _on_imprimir(self) -> None:
-        if self._busy or not self._lote_bytes:
-            return
+    def _impressora_valida(self) -> str | None:
         impressora = self.cb_impressora.get()
         if not impressora or impressora.startswith("("):
             messagebox.showwarning("Impressora", "Selecione uma impressora valida.")
+            return None
+        return impressora
+
+    def _on_imprimir(self) -> None:
+        if self._busy or not self._lote_bytes:
+            return
+        impressora = self._impressora_valida()
+        if not impressora:
             return
         lote_id = datetime.now().strftime("%Y%m%d%H%M%S")
+        modelo = self.label_store.ativo()
 
-        # Pass-through fiel: envia os bytes ORIGINAIS do arquivo da Shopee,
-        # na ordem original, sem re-render nem re-encode.
-        job = PrintJob(
-            printer_name=impressora,
-            job_name=f"Lote-{lote_id}",
-            zpl_content=self._lote_bytes,
-        )
+        if modelo.modo == MODO_PASS_THROUGH:
+            # Fiel: envia os bytes ORIGINAIS do arquivo (sem re-render/re-encode).
+            job = PrintJob(printer_name=impressora, job_name=f"Lote-{lote_id}", zpl_content=self._lote_bytes)
+            self.log_status("info", f"Lote {lote_id} (fiel) enviado para fila de impressao.")
+        else:
+            etiquetas = self._etiquetas_atuais
+            sem_qr = sum(1 for et in etiquetas if et.metadados.get("sticker") is None)
+            if sem_qr:
+                self.log_status("aviso", f"{sem_qr} etiqueta(s) sem QR nao serao compostas.")
+
+            # Compor no worker (off-UI): recorta QRs/textos e monta o ZPL ^GFA.
+            def builder() -> str:
+                zpl, n, ign = label_renderer.gerar_zpl_de_etiquetas(etiquetas, modelo, lote_id=lote_id)
+                return zpl
+
+            job = PrintJob(printer_name=impressora, job_name=f"Lote-{lote_id}", builder=builder)
+            self.log_status(
+                "info", f"Lote {lote_id} (composto: {modelo.nome}) enviado para fila de impressao."
+            )
         self.worker.submit(job)
-        self.log_status("info", f"Lote {lote_id} enviado para fila de impressao.")
+
+    def _imprimir_teste(self, modelo) -> None:
+        """Imprime UMA etiqueta de teste com o modelo (calibracao de alinhamento)."""
+        impressora = self._impressora_valida()
+        if not impressora:
+            return
+        if modelo.modo == MODO_PASS_THROUGH:
+            messagebox.showinfo(
+                "Teste", "Modo fiel imprime o arquivo original; nao ha etiqueta de teste.", parent=self
+            )
+            return
+        amostra = next((et for et in self._etiquetas_atuais if et.metadados.get("sticker") is not None), None)
+        if amostra is None:
+            messagebox.showinfo(
+                "Teste", "Processe um arquivo da Shopee antes de imprimir o teste.", parent=self
+            )
+            return
+
+        def builder() -> str:
+            par = label_renderer._qr_e_texto(amostra)
+            img = label_renderer.compor_linha([par], modelo)
+            return label_renderer.gerar_zpl([img], modelo, lote_id="TESTE")
+
+        self.worker.submit(PrintJob(printer_name=impressora, job_name="Teste-Etiqueta", builder=builder))
+        self.log_status("info", f"Etiqueta de teste enviada ({modelo.nome}).")
 
     # ----------------------------------------------------------- painel imagem
     def _on_selecionar_linha(self, _event=None) -> None:
@@ -461,9 +542,14 @@ class MainView(ctk.CTkFrame):
             self._mostrar_imagem(None, "Sem imagem para este formato (ZPL texto).")
             return
         st = et.metadados.get("sticker")
-        if st is not None:
+        modelo = self.label_store.ativo()
+        if st is not None and modelo.modo != MODO_PASS_THROUGH:
+            # Preview = etiqueta JA composta no modelo ativo (igual ao que imprime).
+            img = label_renderer.preview_etiqueta(et, modelo)
+            legenda = f"{modelo.nome}  -  SKU {et.sku}"
+        elif st is not None:
             img = grf_decoder.crop_sticker(folha, st)
-            legenda = f"SKU {et.sku}  -  folha {et.metadados.get('grf_indice', '?')}"
+            legenda = f"SKU {et.sku}  -  folha {et.metadados.get('grf_indice', '?')} (fiel 10x15)"
         else:
             img = folha  # QR nao detectado: mostra a folha inteira
             legenda = f"{et.sku}  -  folha inteira (QR nao detectado)"
