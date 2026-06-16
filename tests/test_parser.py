@@ -164,6 +164,45 @@ class TestCropSticker(unittest.TestCase):
         crop2 = grf_decoder.crop_sticker(folha, st2)
         self.assertLessEqual(crop2.size[1], 100 + grf_decoder.CROP_MARGEM_TOPO)
 
+    def test_crop_seller_e_descricao_separam_as_linhas(self):
+        # Geometria calibrada: abaixo do QR vem Seller SKU (~[+7:+13]),
+        # SKU numerico (~[+14:+20]) e descricao (~[+21:+37]). crop_seller_sku
+        # pega so a 1a linha; crop_descricao pula Seller+SKU e pega a descricao.
+        from PIL import ImageOps
+
+        st = StickerInfo(sku="X", qr_left=180, qr_top=24, qr_width=172, qr_height=172)
+        qb = st.qr_top + st.qr_height  # base do QR
+
+        def tem_tinta(img):
+            return ImageOps.invert(img.convert("L")).getbbox() is not None
+
+        def folha_com_pixel(dy):
+            f = self._folha()
+            f.putpixel((200, qb + dy), 0)  # 1 pixel preto na linha dy abaixo do QR
+            return f
+
+        # Largura igual aos demais recortes; altura = faixa do Seller SKU.
+        seller_dim = grf_decoder.crop_seller_sku(self._folha(), st)
+        self.assertEqual(
+            seller_dim.size,
+            (172 + 2 * grf_decoder.CROP_MARGEM_X, grf_decoder.SELLER_ALTURA),
+        )
+
+        # +8 = linha Seller SKU -> entra no seller, fora da descricao.
+        f = folha_com_pixel(8)
+        self.assertTrue(tem_tinta(grf_decoder.crop_seller_sku(f, st)))
+        self.assertFalse(tem_tinta(grf_decoder.crop_descricao(f, st)))
+
+        # +16 = linha do SKU numerico (texto nativo) -> pulada por AMBOS.
+        f = folha_com_pixel(16)
+        self.assertFalse(tem_tinta(grf_decoder.crop_seller_sku(f, st)))
+        self.assertFalse(tem_tinta(grf_decoder.crop_descricao(f, st)))
+
+        # +30 = linha de descricao -> entra na descricao, fora do seller.
+        f = folha_com_pixel(30)
+        self.assertFalse(tem_tinta(grf_decoder.crop_seller_sku(f, st)))
+        self.assertTrue(tem_tinta(grf_decoder.crop_descricao(f, st)))
+
 
 if __name__ == "__main__":
     unittest.main()

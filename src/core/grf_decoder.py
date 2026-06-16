@@ -89,9 +89,11 @@ def _detectar_stickers(img: Image.Image) -> list[StickerInfo]:
     return stickers
 
 
-# Geometria do sticker em torno do QR (calibrada na folha real 816x1218:
-# QRs de ~172px com pitch vertical de ~236px -> ~64px de texto abaixo do QR;
-# colunas separadas por gap de apenas ~8px, dai a margem lateral pequena).
+# Geometria do sticker em torno do QR. Calibrada na folha real 816x1218 (medida
+# em 35+ produtos, estavel): QR ~164x172, colunas em x~180/359 (pitch ~179px).
+# O bloco de texto abaixo do QR tem 4 linhas, em y RELATIVO a base do QR:
+#   Seller SKU  ~[+7:+13]   |  SKU numerico ~[+14:+20]  |  descricao ~[+21:+37]
+# As colunas distam so ~179px, dai a margem lateral pequena (texto cabe em ~168px).
 CROP_MARGEM_X = 8
 CROP_MARGEM_TOPO = 4
 CROP_ALTURA_TEXTO = 58
@@ -137,35 +139,41 @@ def crop_qr(folha: Image.Image, st: StickerInfo) -> Image.Image:
     )
 
 
-def crop_texto(folha: Image.Image, st: StickerInfo) -> Image.Image:
-    """Recorta o bloco de texto (Seller SKU, SKU, descricao) logo abaixo do QR.
+# Faixa do Seller SKU (1a linha do bloco, ~[+7:+13] abaixo do QR). Recortamos do
+# bitmap porque o Seller SKU so existe rasterizado / no catalogo manual; aqui
+# garantimos que ele apareca SEMPRE. Margem folgada cobre variacao de +-2px.
+SELLER_TOPO = 5
+SELLER_ALTURA = 9
 
-    Mesma largura do QR (o texto da Shopee fica na coluna do QR, sem invadir
-    a coluna vizinha). O renderizador apara o espaco branco depois.
+
+def crop_seller_sku(folha: Image.Image, st: StickerInfo) -> Image.Image:
+    """Recorta a linha do Seller SKU (1a linha de texto, logo abaixo do QR).
+
+    Mesma largura dos demais recortes; o renderizador apara o branco depois.
     """
     return _crop_clampado(
         folha,
         st.qr_left - CROP_MARGEM_X,
-        st.qr_top + st.qr_height,
+        st.qr_top + st.qr_height + SELLER_TOPO,
         st.qr_width + 2 * CROP_MARGEM_X,
-        CROP_ALTURA_TEXTO,
+        SELLER_ALTURA,
     )
 
 
-# Distancia (px, abaixo do fim do QR) onde COMECA a descricao do produto. As
-# ~2 primeiras linhas do bloco sao Seller SKU + SKU Shopee, que o renderizador
-# agora re-escreve como texto nativo (nitido); a descricao (ultimas ~2 linhas)
-# nao temos como texto confiavel, entao seguimos recortando-a do bitmap.
-# Calibrado na folha real (816x1218): ~64px de texto / 4 linhas -> ~16px/linha.
-CROP_DESCRICAO_TOPO = 28
+# Distancia (px, abaixo do fim do QR) onde COMECA a descricao do produto. As 2
+# primeiras linhas do bloco sao Seller SKU + SKU numerico; a descricao vem em
+# ~[+21:+37]. Comecar em 20 pula o SKU (texto nativo) e captura AS DUAS linhas
+# da descricao (antes 28 pegava so a ultima + residuo). Calibrado em arquivos
+# reais (Print_Barcode_*.txt / teste FullPrint.txt).
+CROP_DESCRICAO_TOPO = 20
 
 
 def crop_descricao(folha: Image.Image, st: StickerInfo) -> Image.Image:
-    """Recorta SO as linhas de descricao do produto (abaixo do Seller SKU/SKU).
+    """Recorta as linhas de descricao do produto (abaixo do Seller SKU/SKU).
 
-    Diferente de :func:`crop_texto`, pula a faixa superior (Seller SKU + SKU
-    Shopee), que passa a ser renderizada como texto nativo. Sobra a descricao,
-    que so existe rasterizada no bitmap da Shopee.
+    Pula a faixa superior (Seller SKU + SKU numerico) e vai ate o fim do bloco
+    de texto; o branco excedente e aparado no render. A descricao so existe
+    rasterizada no bitmap da Shopee (sem OCR).
     """
     return _crop_clampado(
         folha,

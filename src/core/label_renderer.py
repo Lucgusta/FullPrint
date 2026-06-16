@@ -5,12 +5,13 @@ tamanho exato da midia, e enviar 1 bloco ZPL (``^GFA``) por linha. Assim cada
 ``^XA`` tem a altura de uma etiqueta -> a impressora sincroniza no gap a cada
 linha (imprime todas) e o conteudo cai alinhado a etiqueta.
 
-Legibilidade (v0.3.1): Seller SKU e SKU Shopee — que temos como TEXTO confiavel
-(catalogo manual + QR) — sao re-escritos como **texto nativo** com fonte
-TrueType na resolucao da impressora (203 dpi), ficando nitidos em qualquer
-tamanho. So a DESCRICAO do produto, que existe apenas rasterizada no bitmap da
-Shopee (sem OCR confiavel), segue recortada do bitmap original
-(``grf_decoder.crop_descricao``), com downscale melhorado (sem dithering).
+Legibilidade (v0.3.2): o SKU Shopee — que temos como TEXTO confiavel (lido do
+QR) — e re-escrito como **texto nativo** com fonte TrueType na resolucao da
+impressora (203 dpi), nitido em qualquer tamanho. O **Seller SKU** e a
+**descricao** so existem rasterizados no bitmap da Shopee (sem OCR confiavel),
+entao sao **recortados do bitmap** (``grf_decoder.crop_seller_sku`` /
+``crop_descricao``) com downscale limpo (sem dithering). Assim o Seller SKU
+aparece SEMPRE (mesmo sem mapeamento no catalogo).
 """
 from __future__ import annotations
 
@@ -30,15 +31,15 @@ PAD = 4
 GAP_QR_TEXTO = 8
 GAP_LINHA = 2  # espaco vertical entre as linhas de texto
 
-# Fracao da altura util da etiqueta reservada a cada linha de texto nativo.
-# O restante fica para a descricao (bitmap). Seller SKU e o codigo de coleta
-# mais importante, entao recebe a maior fatia.
-FRAC_SELLER = 0.30
-FRAC_SKU = 0.20
+# Fracao da altura util da etiqueta reservada a cada bloco. Seller SKU e o codigo
+# de coleta mais importante -> maior fatia; SKU Shopee (texto nativo) menor; o
+# restante vai para a descricao (bitmap).
+FRAC_SELLER = 0.38
+FRAC_SKU = 0.22
 
 # Fontes candidatas (nome resolve no SO; caminhos absolutos cobrem o Linux/CI).
 # No Windows do ARTHUR, "arial.ttf" resolve pelo nome. Fallback: fonte embutida
-# do Pillow. O texto nativo aqui e so ASCII (Seller SKU + SKU), sem acentos.
+# do Pillow. O texto nativo aqui e so o SKU Shopee (ASCII), sem acentos.
 _FONTES_TTF = {
     False: [
         "DejaVuSans.ttf",
@@ -60,10 +61,11 @@ _FONT_CACHE: dict[tuple[int, bool], ImageFont.ImageFont] = {}
 
 @dataclass
 class _Item:
-    """Conteudo de UMA etiqueta a compor: QR + descricao (bitmap) + textos."""
+    """Conteudo de UMA etiqueta a compor: QR + Seller SKU e descricao (bitmaps)
+    + SKU Shopee (texto, do QR)."""
     qr: Image.Image
+    seller_img: Image.Image | None
     descricao: Image.Image | None
-    seller_sku: str
     sku: str
 
 
@@ -123,12 +125,11 @@ def _render_texto(texto: str, box_w: int, box_h: int, bold: bool = False) -> Ima
     return img.point(lambda p: 0 if p < 128 else 255).convert("1")
 
 
-def _resize_descricao(img: Image.Image, box_w: int, box_h: int) -> Image.Image | None:
-    """Encaixa a descricao (recorte do bitmap) na caixa, com downscale limpo.
-
-    Melhorias sobre o pass-through antigo: aproveita toda a caixa (sem teto de
-    escala), autocontraste e threshold SEM dithering (Floyd-Steinberg picotava
-    o texto). LANCZOS suaviza as bordas antes do threshold.
+def _resize_bitmap(img: Image.Image, box_w: int, box_h: int) -> Image.Image | None:
+    """Encaixa um recorte do bitmap (Seller SKU ou descricao) na caixa, com
+    downscale limpo: aproveita toda a caixa (sem teto de escala), autocontraste
+    e threshold SEM dithering (Floyd-Steinberg picotava o texto). LANCZOS
+    suaviza as bordas antes do threshold.
     """
     src = _trim_tinta(img).convert("L")
     w, h = src.size
@@ -142,7 +143,8 @@ def _resize_descricao(img: Image.Image, box_w: int, box_h: int) -> Image.Image |
 
 def _colocar_etiqueta(canvas: Image.Image, x0: int, item: _Item, model: LabelModel) -> None:
     """Compoe UMA etiqueta sobre o canvas: QR a esquerda; a direita (de cima
-    para baixo) Seller SKU e SKU Shopee em texto nativo + descricao (bitmap)."""
+    para baixo) Seller SKU (bitmap) + SKU Shopee (texto nativo) + descricao
+    (bitmap)."""
     altura = model.altura_dots
     topo = model.dots(model.margem_topo_mm)
 
@@ -161,15 +163,15 @@ def _colocar_etiqueta(canvas: Image.Image, x0: int, item: _Item, model: LabelMod
         return
 
     y = box_y
-    # Seller SKU (texto nativo, em destaque) — so se houver mapeamento.
-    if item.seller_sku.strip():
+    # Seller SKU (bitmap, em destaque) — sempre presente; aparece sempre.
+    if item.seller_img is not None:
         h_seller = round(box_h * FRAC_SELLER)
-        img = _render_texto(item.seller_sku, box_w, h_seller, bold=True)
+        img = _resize_bitmap(item.seller_img, box_w, h_seller)
         if img is not None:
             canvas.paste(img, (box_x, y))
         y += h_seller + GAP_LINHA
 
-    # SKU Shopee (texto nativo).
+    # SKU Shopee (texto nativo, nitido).
     if item.sku.strip():
         h_sku = round(box_h * FRAC_SKU)
         img = _render_texto(f"SKU {item.sku}", box_w, h_sku, bold=False)
@@ -180,7 +182,7 @@ def _colocar_etiqueta(canvas: Image.Image, x0: int, item: _Item, model: LabelMod
     # Descricao (bitmap) ocupa todo o espaco vertical restante.
     desc_h = box_y + box_h - y
     if item.descricao is not None and desc_h > 4:
-        desc = _resize_descricao(item.descricao, box_w, desc_h)
+        desc = _resize_bitmap(item.descricao, box_w, desc_h)
         if desc is not None:
             canvas.paste(desc, (box_x, y))
 
@@ -236,7 +238,8 @@ def gerar_zpl(linhas: list[Image.Image], model: LabelModel, lote_id: str = "LOTE
 
 
 def _item_etiqueta(etiqueta) -> _Item | None:
-    """Monta o ``_Item`` (QR + descricao recortados + textos) de uma EtiquetaZPL.
+    """Monta o ``_Item`` (QR + Seller SKU + descricao recortados + SKU) de uma
+    EtiquetaZPL.
 
     Retorna None se a etiqueta nao tem sticker (ex.: placeholder SEM-QR),
     pois sem o QR nao da para compor a etiqueta nova.
@@ -247,8 +250,8 @@ def _item_etiqueta(etiqueta) -> _Item | None:
         return None
     return _Item(
         qr=grf_decoder.crop_qr(folha, st),
+        seller_img=grf_decoder.crop_seller_sku(folha, st),
         descricao=grf_decoder.crop_descricao(folha, st),
-        seller_sku=(getattr(etiqueta, "seller_sku", "") or ""),
         sku=(getattr(etiqueta, "sku", "") or ""),
     )
 
