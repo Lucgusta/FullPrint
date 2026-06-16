@@ -522,8 +522,8 @@ class MainView(ctk.CTkFrame):
             return
 
         def builder() -> str:
-            par = label_renderer._qr_e_texto(amostra)
-            img = label_renderer.compor_linha([par], modelo)
+            item = label_renderer._item_etiqueta(amostra)
+            img = label_renderer.compor_linha([item], modelo)
             return label_renderer.gerar_zpl([img], modelo, lote_id="TESTE")
 
         self.worker.submit(PrintJob(printer_name=impressora, job_name="Teste-Etiqueta", builder=builder))

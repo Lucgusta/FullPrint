@@ -152,6 +152,30 @@ def crop_texto(folha: Image.Image, st: StickerInfo) -> Image.Image:
     )
 
 
+# Distancia (px, abaixo do fim do QR) onde COMECA a descricao do produto. As
+# ~2 primeiras linhas do bloco sao Seller SKU + SKU Shopee, que o renderizador
+# agora re-escreve como texto nativo (nitido); a descricao (ultimas ~2 linhas)
+# nao temos como texto confiavel, entao seguimos recortando-a do bitmap.
+# Calibrado na folha real (816x1218): ~64px de texto / 4 linhas -> ~16px/linha.
+CROP_DESCRICAO_TOPO = 28
+
+
+def crop_descricao(folha: Image.Image, st: StickerInfo) -> Image.Image:
+    """Recorta SO as linhas de descricao do produto (abaixo do Seller SKU/SKU).
+
+    Diferente de :func:`crop_texto`, pula a faixa superior (Seller SKU + SKU
+    Shopee), que passa a ser renderizada como texto nativo. Sobra a descricao,
+    que so existe rasterizada no bitmap da Shopee.
+    """
+    return _crop_clampado(
+        folha,
+        st.qr_left - CROP_MARGEM_X,
+        st.qr_top + st.qr_height + CROP_DESCRICAO_TOPO,
+        st.qr_width + 2 * CROP_MARGEM_X,
+        CROP_ALTURA_TEXTO - CROP_DESCRICAO_TOPO,
+    )
+
+
 def extrair_etiquetas(conteudo: str) -> list[EtiquetaGRF]:
     """Decodifica cada GRF do TXT e detecta seus QRs (stickers internos)."""
     etiquetas: list[EtiquetaGRF] = []

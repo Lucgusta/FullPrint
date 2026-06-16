@@ -6,4 +6,4 @@ Em desenvolvimento mantenha aqui a proxima versao a ser lancada.
 """
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
