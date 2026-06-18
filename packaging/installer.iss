@@ -68,13 +68,14 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-{ ------------------------------------------------------------------------------
+(* ------------------------------------------------------------------------------
   Node.js: o FullPrint usa o Node para INTERPRETAR ZPL (preview "Interpretar
   ZPL"). A impressao e o preview de bitmap nao dependem dele. Se o Node nao for
   encontrado, perguntamos ao usuario e, com o aceite, baixamos a versao portatil
   oficial para {app}\node (sem admin, sem mexer no PATH). O app procura o Node
   nessa pasta automaticamente (src/core/zpl_renderer.py -> node_executable()).
------------------------------------------------------------------------------- }
+  Comentario em (* *) e nao { }: o } de {app} fecharia um comentario { } cedo demais.
+------------------------------------------------------------------------------ *)
 
 function OnDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
 begin
