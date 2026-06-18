@@ -74,7 +74,8 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName}"; Flags: now
   encontrado, perguntamos ao usuario e, com o aceite, baixamos a versao portatil
   oficial para {app}\node (sem admin, sem mexer no PATH). O app procura o Node
   nessa pasta automaticamente (src/core/zpl_renderer.py -> node_executable()).
-  Comentario em (* *) e nao { }: o } de {app} fecharia um comentario { } cedo demais.
+  Nota: bloco delimitado por parenteses-asterisco e nao por chaves, porque o
+  fecha-chave de {app} encerraria um comentario de chaves cedo demais.
 ------------------------------------------------------------------------------ *)
 
 function OnDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
