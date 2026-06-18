@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import threading
+import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import customtkinter as ctk
+from PIL import ImageTk
 
 from ...config.settings import Settings
-from ...core import grf_decoder, label_renderer
+from ...core import grf_decoder, label_renderer, zpl_renderer
 from ...core.agrupador import EtiquetaAgrupador
 from ...core.label_models import MODO_PASS_THROUGH, LabelModelStore
 from ...core.parser import ShopeeZPLParser
@@ -60,7 +62,9 @@ class MainView(ctk.CTkFrame):
         self._etiquetas_atuais: list = []
         self._grupos_atuais = None
         self._iid_etiqueta: dict[str, object] = {}
-        self._ctk_img_atual = None  # referencia viva (evita GC da imagem Tk)
+        self._tk_img_atual = None   # referencia viva do PhotoImage (evita GC da imagem Tk)
+        self._preview_seq = 0       # token anti-corrida do render assincrono de ZPL
+        self._et_selecionada = None  # etiqueta atual (alvo do "Interpretar ZPL")
         self._modo_preview = "Por SKU"
         self._busy = False
         self._log_lines = 0
@@ -229,12 +233,36 @@ class MainView(ctk.CTkFrame):
         painel.grid_columnconfigure(0, weight=1)
         painel.grid_rowconfigure(0, weight=1)
 
-        self.lbl_imagem = ctk.CTkLabel(painel, text="Selecione uma linha para ver o sticker.")
-        self.lbl_imagem.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 0))
-        self.lbl_imagem_info = ctk.CTkLabel(
-            painel, text="", font=ctk.CTkFont(size=11), text_color="#9a9a9a"
+        # tk.Label nativo (nao CTkLabel): o CTkImage tem um bug conhecido de
+        # rastreamento ("image pyimageN doesn't exist") ao trocar a imagem
+        # repetidamente. Gerenciamos o PhotoImage manualmente, sem esse bug.
+        self.lbl_imagem = tk.Label(
+            painel,
+            text="Selecione uma linha para ver o sticker.",
+            bg="#1f1f1f",
+            fg="#cfcfcf",
         )
-        self.lbl_imagem_info.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+        self.lbl_imagem.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 0))
+
+        rodape_img = ctk.CTkFrame(painel, fg_color="transparent")
+        rodape_img.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
+        rodape_img.grid_columnconfigure(0, weight=1)
+        self.lbl_imagem_info = ctk.CTkLabel(
+            rodape_img, text="", font=ctk.CTkFont(size=11), text_color="#9a9a9a"
+        )
+        self.lbl_imagem_info.grid(row=0, column=0, sticky="ew")
+        # Interpreta o ZPL bruto da etiqueta selecionada (Node/zpl-renderer-js):
+        # substituto local do Labelary — funciona para qualquer ZPL, inclusive
+        # o texto puro e o que o app gera.
+        self.btn_interpretar = ctk.CTkButton(
+            rodape_img,
+            text="Interpretar ZPL",
+            width=130,
+            height=26,
+            command=self._on_interpretar_zpl,
+            state="disabled",
+        )
+        self.btn_interpretar.grid(row=0, column=1, sticky="e", padx=(6, 0))
 
     # ----------------------------------------------------------------- helpers
     def _popular_impressoras(self) -> None:
@@ -322,6 +350,8 @@ class MainView(ctk.CTkFrame):
         self._etiquetas_atuais = []
         self._grupos_atuais = None
         self._iid_etiqueta = {}
+        self._et_selecionada = None
+        self.btn_interpretar.configure(state="disabled")
         self.tree.delete(*self.tree.get_children())
         self._mostrar_imagem(None, "Selecione uma linha para ver o sticker.")
         self.lbl_arquivo.configure(text=str(self._arquivo_atual))
@@ -537,9 +567,21 @@ class MainView(ctk.CTkFrame):
         et = self._iid_etiqueta.get(sel[0])
         if et is None:
             return
+        self._et_selecionada = et
+        # Botao "Interpretar ZPL" disponivel sempre que ha ZPL bruto + Node ok.
+        tem_zpl = bool(getattr(et, "zpl_raw", "").strip())
+        self.btn_interpretar.configure(
+            state="normal" if (tem_zpl and zpl_renderer.is_available()) else "disabled"
+        )
         folha = et.metadados.get("imagem_folha")
         if folha is None:
-            self._mostrar_imagem(None, "Sem imagem para este formato (ZPL texto).")
+            # Sem bitmap GRF (ZPL "texto puro"): antes ficava cego. Agora
+            # interpretamos o ZPL de verdade via Node (texto, barcodes, QR...).
+            if tem_zpl and zpl_renderer.is_available():
+                self._render_zpl_async(et.zpl_raw, f"ZPL interpretado  -  SKU {et.sku}", self.label_store.ativo())
+            else:
+                motivo = zpl_renderer.unavailable_reason() or "Sem imagem para este formato."
+                self._mostrar_imagem(None, motivo)
             return
         st = et.metadados.get("sticker")
         modelo = self.label_store.ativo()
@@ -555,10 +597,44 @@ class MainView(ctk.CTkFrame):
             legenda = f"{et.sku}  -  folha inteira (QR nao detectado)"
         self._mostrar_imagem(img, legenda)
 
+    def _on_interpretar_zpl(self) -> None:
+        """Renderiza o ZPL bruto da etiqueta selecionada interpretando-o de
+        verdade (Node/zpl-renderer-js) — util para conferir texto/barcodes e o
+        que o app gera, sem depender do bitmap GRF embutido."""
+        et = self._et_selecionada
+        if et is None or not getattr(et, "zpl_raw", "").strip():
+            return
+        self._render_zpl_async(et.zpl_raw, f"ZPL interpretado  -  SKU {et.sku}", self.label_store.ativo())
+
+    def _render_zpl_async(self, zpl: str, legenda: str, modelo) -> None:
+        """Interpreta o ``zpl`` fora da UI (subprocess Node leva ~1s) e mostra a
+        imagem. Um token sequencial descarta resultados de selecoes antigas."""
+        self._preview_seq += 1
+        seq = self._preview_seq
+        self._mostrar_imagem(None, "Interpretando ZPL...")
+
+        def worker() -> None:
+            try:
+                img = zpl_renderer.render_for_model(zpl, modelo)
+                self.after(0, self._concluir_render_zpl, seq, img, legenda, None)
+            except Exception as exc:  # noqa: BLE001 (RendererError e afins)
+                self.after(0, self._concluir_render_zpl, seq, None, legenda, exc)
+
+        threading.Thread(target=worker, name="ZplRenderWorker", daemon=True).start()
+
+    def _concluir_render_zpl(self, seq: int, img, legenda: str, erro) -> None:
+        if seq != self._preview_seq:
+            return  # selecao mudou enquanto renderizava — descarta resultado antigo
+        if erro is not None:
+            self._mostrar_imagem(None, f"Falha ao interpretar ZPL: {erro}")
+            self.log_status("erro", f"Render ZPL: {erro}")
+            return
+        self._mostrar_imagem(img, legenda)
+
     def _mostrar_imagem(self, img, legenda: str) -> None:
         if img is None:
-            self._ctk_img_atual = None
-            self.lbl_imagem.configure(image=None, text=legenda)
+            self._tk_img_atual = None
+            self.lbl_imagem.configure(image="", text=legenda)
             self.lbl_imagem_info.configure(text="")
             return
         img = img.convert("L")
@@ -566,6 +642,9 @@ class MainView(ctk.CTkFrame):
         # Cabe no painel (~210px de altura, com folga p/ legenda); sem upscale.
         fator = min(170 / h, 760 / w, 1.0)
         tamanho = (max(1, int(w * fator)), max(1, int(h * fator)))
-        self._ctk_img_atual = ctk.CTkImage(light_image=img, dark_image=img, size=tamanho)
-        self.lbl_imagem.configure(image=self._ctk_img_atual, text="")
+        # tk.Label nao reescala sozinho (CTkImage reescalava via size): fazemos o
+        # resize no PIL e guardamos o PhotoImage (referencia viva evita GC).
+        img = img.resize(tamanho)
+        self._tk_img_atual = ImageTk.PhotoImage(img)
+        self.lbl_imagem.configure(image=self._tk_img_atual, text="")
         self.lbl_imagem_info.configure(text=legenda)

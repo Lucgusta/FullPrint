@@ -28,6 +28,21 @@ datas += [
     (os.path.join(ROOT, "src/config/config.yaml"), "src/config"),
 ]
 
+# Renderer local de ZPL (Node + zpl-renderer-js): empacotamos `render.mjs` e o
+# `node_modules` para a pasta `renderer/` do bundle. O Node.js em si NAO e
+# empacotado -- precisa estar instalado na maquina (o app degrada com mensagem
+# clara via zpl_renderer.unavailable_reason() quando ausente).
+RENDERER_DIR = os.path.join(ROOT, "renderer")
+for _root, _dirs, _files in os.walk(RENDERER_DIR):
+    # Ignora caches/locks irrelevantes ao runtime.
+    _dirs[:] = [d for d in _dirs if d != ".cache"]
+    for _f in _files:
+        if _f in ("package-lock.json",):
+            continue
+        _abs = os.path.join(_root, _f)
+        _dest = os.path.relpath(_root, ROOT)  # ex.: "renderer" ou "renderer/node_modules/..."
+        datas.append((_abs, _dest))
+
 hiddenimports = []
 hiddenimports += collect_submodules("pyzbar")
 hiddenimports += [

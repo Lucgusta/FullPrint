@@ -11,9 +11,16 @@ data/dev_output/*.zpl
 data/dev_output/*.png
 data/*.sqlite*
 data/sku_catalog.json
+data/label_models.json
 
 .vscode/
 .idea/
+
+# Briefing interno de desenvolvimento (nao versionado).
+BRIEFING_CLAUDE_CODE.md
+
+# Dependencias do renderer Node (reinstaladas via `npm ci` / `npm install`).
+renderer/node_modules/
 
 # Artefatos de build/distribuicao (gerados pelo PyInstaller/Inno Setup/CI)
 build/

@@ -26,6 +26,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Configurar Node.js (renderer ZPL)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Derivar versao da tag
         id: ver
         shell: pwsh
@@ -44,6 +49,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+
+      - name: Instalar dependencias do renderer (Node)
+        working-directory: renderer
+        run: npm ci --no-audit --no-fund
 
       - name: Rodar testes
         run: python -m unittest discover -s tests -p "test_*.py" -v

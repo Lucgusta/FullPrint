@@ -11,3 +11,7 @@ pyzbar>=0.1.9
 # Dependencias do sistema (instalar separadamente):
 #   Linux:   apt install libzbar0
 #   Windows: o pyzbar ja inclui libzbar.dll empacotada.
+#
+# Interpretacao de ZPL -> imagem (src/core/zpl_renderer.py): nao usa pacote
+# Python -- chama o renderer Node via subprocess. Requer Node.js v18+ instalado
+# e `cd renderer && npm install` (pacote zpl-renderer-js). Veja o README.

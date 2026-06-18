@@ -15,6 +15,14 @@
 > Motivação: o arquivo da Shopee Full já é ZPL válido e completo (bitmaps GRF
 > Z64); re-renderizar a partir de texto extraído por OCR produzia etiquetas
 > incorretas. Ver ADR `2026-06-12-impressao-pass-through-remocao-ocr` no vault.
+>
+> **ATUALIZAÇÃO (v0.3.2+) — Interpretação local de ZPL.** Foi adicionado um
+> **substituto local do Labelary** (`src/core/zpl_renderer.py` + `renderer/`):
+> interpreta ZPL → imagem via `zpl-renderer-js` (WASM) chamado por Node em
+> subprocess — **local, sem web/API, sem limite de caracteres**. Usado para o
+> preview de ZPL "texto puro" (que antes ficava cego) e pelo botão "Interpretar
+> ZPL". O bitmap GRF (pass-through) e o renderizador PIL (composto) seguem como
+> antes. Detalhes em `BRIEFING_CLAUDE_CODE.md`.
 
 Como Arquiteto de Software, realizei a análise da sua demanda para o processamento e impressão inteligente de etiquetas ZPL da Shopee. Abaixo, detalho o projeto ponta a ponta para que possa ser implementado de forma escalável e segura.
 
