@@ -14,6 +14,7 @@ Automação de impressão de etiquetas ZPL da Shopee Full em impressoras Zebra (
 - Anexar arquivo TXT/ZPL via diálogo.
 - **Impressão pass-through**: os bytes originais do arquivo vão direto para a impressora (RAW), sem decode/re-encode — fidelidade garantida por construção.
 - Preview por SKU ou individual: SKU Shopee lido do **QR code** de cada sticker (pyzbar), quantidade por SKU, e **imagem real do sticker** (recortada do bitmap GRF) ao selecionar uma linha.
+- **Interpretação local de ZPL (substituto do Labelary)**: botão "Interpretar ZPL" renderiza o ZPL bruto de qualquer etiqueta em imagem — texto, fontes, barcodes, QR, etc. — usando `zpl-renderer-js` (WASM) via Node, **sem Labelary online nem limite de caracteres**. ZPL "texto puro" (sem bitmap GRF), que antes não tinha preview, agora é renderizado automaticamente.
 - **Seller SKU via catálogo manual**: duplo-clique numa linha cadastra o mapeamento SKU Shopee → Seller SKU (persistido em `data/sku_catalog.json`).
 - Impressão em **thread separada** (worker daemon + fila).
 - **Modo DEV** (Linux/macOS, ou win32print indisponível): grava o ZPL em `data/dev_output/` ao invés de mandar para impressora — útil para desenvolvimento.
@@ -27,11 +28,12 @@ shopee_zpl_spooler/
 │   ├── main.py
 │   ├── config/{settings.py, config.yaml}
 │   ├── core/{parser.py, agrupador.py, grf_decoder.py, sku_catalog.py,
-│   │         label_models.py, label_renderer.py}
+│   │         label_models.py, label_renderer.py, zpl_renderer.py}
 │   ├── services/{printer.py, spooler_worker.py, updater.py}
 │   ├── database/     # Fase 2
 │   ├── ui/{app.py, views/main_view.py}
 │   └── utils/{logger.py, zpl_utils.py, runtime.py}
+├── renderer/{package.json, render.mjs}   # motor Node (zpl-renderer-js) p/ interpretar ZPL
 ├── tests/{test_parser.py, smoke_pipeline.py, smoke_grf.py, render_grf.py}
 ├── logs/  data/
 ├── requirements.txt
@@ -58,9 +60,23 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
+
+# Motor de interpretação de ZPL (Node.js v18+ deve estar instalado):
+cd renderer && npm install && cd ..
 ```
 
 `pywin32` instala apenas no Windows (marker em `requirements.txt`). Em outras plataformas, o serviço cai para **modo DEV** automaticamente. No Linux, o pyzbar precisa do `libzbar0` do sistema (`apt install libzbar0`). Rodando do código-fonte o auto-update fica desativado (só age no `.exe` instalado).
+
+### Renderer de ZPL (Node.js)
+
+A interpretação de ZPL → imagem ("Interpretar ZPL") usa o pacote `zpl-renderer-js` (WASM) chamado pelo Python via subprocess (`src/core/zpl_renderer.py` → `renderer/render.mjs`). **Não há servidor web nem API externa** — tudo roda localmente. Requisitos:
+
+- **Node.js v18+** instalado e no `PATH` (ou aponte o binário via variável de ambiente `FULLPRINT_NODE`).
+- `renderer/node_modules` instalado (`cd renderer && npm install`).
+
+Se o Node não estiver disponível, o app continua funcionando normalmente (impressão, preview de bitmap GRF); apenas o botão "Interpretar ZPL" fica desabilitado com uma mensagem explicando o motivo. O `node_modules/` é versionado fora do git e empacotado no build (CI roda `npm ci`).
+
+**Nas máquinas dos operadores (instalador):** o `FullPrintSetup.exe` detecta se o Node já existe e, se não, **pergunta se deseja instalar** — com o aceite, baixa o Node.js portátil oficial (~30 MB) para `{app}\node` (sem admin, sem alterar o PATH). O app procura o Node nessa pasta automaticamente (`node_executable()`). Quem recusar pode usar o app sem a interpretação de ZPL. O `FULLPRINT_NODE` permite apontar um Node específico, se necessário.
 
 ## Execução
 
@@ -111,7 +127,8 @@ Peças do pipeline:
 |---|---|
 | `src/version.py` | Fonte única da versão (injetada pela tag no build). |
 | `src/services/updater.py` | Verifica/baixa/aplica updates via GitHub Releases. |
-| `packaging/FullPrint.spec` | Empacotamento PyInstaller (gera o `.exe`). |
+| `renderer/` | Motor Node (`zpl-renderer-js`) para interpretar ZPL; empacotado no build (CI roda `npm ci`). |
+| `packaging/FullPrint.spec` | Empacotamento PyInstaller (gera o `.exe`; inclui a pasta `renderer/`). |
 | `packaging/installer.iss` | Instalador Inno Setup (bundle + atalhos). |
 | `.github/workflows/release.yml` | CI: testa, compila e publica a cada tag `v*`. |
 

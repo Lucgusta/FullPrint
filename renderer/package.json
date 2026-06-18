@@ -1,0 +1,10 @@
+{
+  "name": "fullprint-zpl-renderer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Motor local de renderizacao ZPL->PNG (zpl-renderer-js/WASM) chamado pelo Python via subprocess.",
+  "dependencies": {
+    "zpl-renderer-js": "^3.4.0"
+  }
+}
