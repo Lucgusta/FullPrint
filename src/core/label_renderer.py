@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import qrcode
+from qrcode.constants import ERROR_CORRECT_M
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from ..utils.logger import get_logger
@@ -24,6 +26,10 @@ from . import grf_decoder
 from .label_models import LabelModel
 
 log = get_logger("label_renderer")
+
+# Quiet zone (modulos brancos) ao redor do QR regenerado. 4 e o minimo da norma
+# ISO/IEC 18004 -> leitura confiavel mesmo em etiqueta pequena (50x25mm).
+QR_BORDER_MODULOS = 4
 
 # Espacamentos internos da etiqueta (dots). Pequenos e fixos: o que importa
 # para o alinhamento na bobina sao as margens/vaos do modelo (configuraveis).
@@ -141,6 +147,37 @@ def _resize_bitmap(img: Image.Image, box_w: int, box_h: int) -> Image.Image | No
     return red.point(lambda p: 0 if p < 145 else 255).convert("1")
 
 
+def _qr_nitido(data: str, lado_dots: int) -> Image.Image | None:
+    """Regenera o QR a partir do dado decodificado (``item.sku``), com cada
+    modulo medindo um numero INTEIRO de dots -> sem reescala fracionaria.
+
+    O QR original da Shopee chega ja rasterizado; redimensiona-lo (NEAREST) para
+    o tamanho do destino por fator nao-inteiro deixa modulos com larguras
+    diferentes (uns 1px, outros 2px) -> QR irregular, as vezes ilegivel. Aqui
+    re-codificamos o MESMO conteudo e escolhemos ``box_size`` (dots por modulo)
+    inteiro que caiba em ``lado_dots`` -> QR perfeitamente uniforme e nitido.
+
+    Devolve uma imagem "1" (lado <= ``lado_dots``) ou ``None`` se nao der para
+    gerar (dado vazio ou modulos nao cabem nem com 1 dot por modulo).
+    """
+    if not data or lado_dots <= 0:
+        return None
+    try:
+        qr = qrcode.QRCode(error_correction=ERROR_CORRECT_M, border=QR_BORDER_MODULOS)
+        qr.add_data(data)
+        qr.make(fit=True)
+        # Modulos totais = grade do QR + quiet zone dos dois lados.
+        total_mod = qr.modules_count + 2 * qr.border
+        box = lado_dots // total_mod  # dots por modulo (inteiro, sem fracao)
+        if box < 1:
+            return None  # QR denso demais para o espaco: cai no fallback
+        qr.box_size = box
+        return qr.make_image(fill_color="black", back_color="white").get_image().convert("1")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Falha ao regenerar QR (%s); usando recorte do bitmap.", exc)
+        return None
+
+
 def _colocar_etiqueta(canvas: Image.Image, x0: int, item: _Item, model: LabelModel) -> None:
     """Compoe UMA etiqueta sobre o canvas: QR a esquerda; a direita (de cima
     para baixo) Seller SKU (bitmap) + SKU Shopee (texto nativo) + descricao
@@ -150,9 +187,16 @@ def _colocar_etiqueta(canvas: Image.Image, x0: int, item: _Item, model: LabelMod
 
     # --- QR (esquerda, centralizado verticalmente) ---
     qr_dots = min(model.dots(model.qr_mm), altura - topo - 2 * PAD)
-    qr = item.qr.convert("L").resize((qr_dots, qr_dots), Image.NEAREST).convert("1")
-    qr_y = topo + max(0, (altura - topo - qr_dots) // 2)
-    canvas.paste(qr, (x0 + PAD, qr_y))
+    # Preferencia: regenerar o QR do dado decodificado (modulos em dots inteiros
+    # -> nitido). Fallback: recorte do bitmap original reescalado (NEAREST).
+    qr = _qr_nitido(item.sku, qr_dots)
+    if qr is None:
+        qr = item.qr.convert("L").resize((qr_dots, qr_dots), Image.NEAREST).convert("1")
+    qr_w, qr_h = qr.size
+    # Centraliza o QR (que pode ser <= qr_dots) na area reservada.
+    qr_x = x0 + PAD + max(0, (qr_dots - qr_w) // 2)
+    qr_y = topo + max(0, (altura - topo - qr_h) // 2)
+    canvas.paste(qr, (qr_x, qr_y))
 
     # --- Coluna de conteudo a direita do QR ---
     box_x = x0 + PAD + qr_dots + GAP_QR_TEXTO

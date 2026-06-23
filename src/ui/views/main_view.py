@@ -8,7 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import customtkinter as ctk
-from PIL import ImageTk
+from PIL import Image, ImageTk
 
 from ...config.settings import Settings
 from ...core import grf_decoder, label_renderer, zpl_renderer
@@ -644,7 +644,8 @@ class MainView(ctk.CTkFrame):
         tamanho = (max(1, int(w * fator)), max(1, int(h * fator)))
         # tk.Label nao reescala sozinho (CTkImage reescalava via size): fazemos o
         # resize no PIL e guardamos o PhotoImage (referencia viva evita GC).
-        img = img.resize(tamanho)
+        # LANCZOS: downscale forte (ate ~7x) sem o borrao do BICUBIC default.
+        img = img.resize(tamanho, Image.LANCZOS)
         self._tk_img_atual = ImageTk.PhotoImage(img)
         self.lbl_imagem.configure(image=self._tk_img_atual, text="")
         self.lbl_imagem_info.configure(text=legenda)

@@ -8,6 +8,9 @@ pywin32>=306; sys_platform == "win32"
 # le o SKU Shopee pelo QR code de cada sticker.
 Pillow>=10.1.0
 pyzbar>=0.1.9
+# Regenera o QR a partir do dado lido (modulos em dots inteiros) no modo
+# composto -> QR nitido, sem reescala fracionaria do bitmap. Puro Python.
+qrcode>=7.4
 # Dependencias do sistema (instalar separadamente):
 #   Linux:   apt install libzbar0
 #   Windows: o pyzbar ja inclui libzbar.dll empacotada.

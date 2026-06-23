@@ -114,5 +114,32 @@ class TestGerarZpl(unittest.TestCase):
         self.assertEqual(img.size, (self.model.largura_dots, self.model.altura_dots))
 
 
+class TestQrNitido(unittest.TestCase):
+    def test_modulos_inteiros_e_cabe_no_espaco(self):
+        lado = 168  # 21mm @ 203dpi
+        qr = R._qr_nitido("BR2406230012345", lado)
+        self.assertIsNotNone(qr)
+        w, h = qr.size
+        self.assertTrue(w <= lado and h <= lado)   # nunca estoura o espaco
+        self.assertEqual(w, h)                      # quadrado
+        # Bilevel (modo "1"): sem cinza de reescala -> modulos nitidos.
+        self.assertEqual(qr.mode, "1")
+
+    def test_dado_vazio_ou_denso_demais_retorna_none(self):
+        self.assertIsNone(R._qr_nitido("", 168))
+        self.assertIsNone(R._qr_nitido("X" * 50, 8))  # QR nao cabe nem com 1 dot/modulo
+
+    def test_qr_regenerado_decodifica_no_mesmo_dado(self):
+        try:
+            from pyzbar import pyzbar
+        except Exception:  # noqa: BLE001 (libzbar pode faltar no CI)
+            self.skipTest("pyzbar/libzbar indisponivel")
+        dado = "BR2406230012345"
+        qr = R._qr_nitido(dado, 200)
+        ampliado = qr.convert("L").resize((qr.width * 3, qr.height * 3), Image.NEAREST)
+        lido = [d.data.decode() for d in pyzbar.decode(ampliado)]
+        self.assertIn(dado, lido)
+
+
 if __name__ == "__main__":
     unittest.main()
